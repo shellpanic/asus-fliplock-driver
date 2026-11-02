@@ -1,0 +1,81 @@
+{ lib
+, python313Packages
+, pkgs
+, waylandSupport ? false
+, x11Support ? true
+}:
+
+let
+  # Define the Python packages required
+  pythonPackages = pkgs.python313.withPackages (ps: with ps;
+    [
+      numpy
+      libevdev
+      pyinotify
+      pyasyncore
+      xkbcommon
+      systemd-python
+      python-periphery
+    ]
+    ++ lib.optionals x11Support [
+      xlib
+      xcffib
+    ]
+    ++ lib.optionals waylandSupport [
+      pywayland
+    ]
+  );
+
+  # Add backwards compatibility on packages name changes
+  compat = import ./compat.nix { inherit pkgs; };
+in
+python313Packages.buildPythonPackage {
+  pname = "asus-numberpad-driver";
+  version = "7.3.0";
+  src = ../.;
+
+  format = "other";
+
+  propagatedBuildInputs = with pkgs; [
+    ibus
+    libevdev
+    curl
+    compat.xinput
+    i2c-tools
+    libxml2
+    libxkbcommon
+    libgcc
+    gcc
+    pythonPackages  # Python dependencies already include python313
+  ];
+
+  doCheck = false;
+
+  # Skip build and just focus on copying files, no setuptools required
+  buildPhase = ''
+    echo "Skipping build phase since there's no setup.py"
+  '';
+
+  # Install files for driver and layouts
+  installPhase = ''
+    mkdir -p $out/share/asus-numberpad-driver
+
+    # Copy the driver script
+    install -Dm755 numberpad.py $out/share/asus-numberpad-driver/numberpad.py
+
+    # Copy layouts directory if it exists, and remove __pycache__ if present
+    if [ -d layouts ]; then
+      cp -r layouts $out/share/asus-numberpad-driver/
+      rm -rf $out/share/asus-numberpad-driver/layouts/__pycache__
+    fi
+  '';
+
+  meta = {
+    homepage = "https://github.com/asus-linux-drivers/asus-numberpad-driver";
+    description = "Linux driver for NumberPad(2.0) on Asus laptops.";
+    license = lib.licenses.gpl2;
+    platforms = lib.platforms.linux;
+    maintainers = with lib.maintainers; [asus-linux-drivers];
+    mainProgram = "numberpad.py";
+  };
+}

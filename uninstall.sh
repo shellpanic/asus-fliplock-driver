@@ -1,54 +1,9 @@
-#!/usr/bin/env bash
-
-if [[ $(id -u) != 0 ]]
-then
-	echo "Please, run this script as root (using sudo for example)"
-	exit 1
-fi
-
-systemctl stop asus_fliplock
-if [[ $? != 0 ]]
-then
-	echo "asus_fliplock.service cannot be stopped correctly..."
-	exit 1
-fi
-
-systemctl disable asus_fliplock
-if [[ $? != 0 ]]
-then
-	echo "asus_fliplock.service cannot be disabled correctly..."
-	exit 1
-fi
-
-rm -f /lib/systemd/system/asus_fliplock.service
-if [[ $? != 0 ]]
-then
-	echo "/lib/systemd/system/asus_fliplock.service cannot be removed correctly..."
-	exit 1
-fi
-
-rm -rf /usr/share/asus_fliplock-driver/
-if [[ $? != 0 ]]
-then
-	echo "/usr/share/asus_fliplock-driver/ cannot be removed correctly..."
-	exit 1
-fi
-
-rm -rf /var/log/asus_fliplock-driver
-if [[ $? != 0 ]]
-then
-	echo "/var/log/asus_fliplock-driver cannot be removed correctly..."
-	exit 1
-fi
-
-systemctl daemon-reload
-
-if [[ $? != 0 ]]; then
-    echo "Something went wrong when was called systemctl daemon reload"
-    exit 1
-else
-    echo "Systemctl daemon realod called succesfully"
-fi
-
-echo "Asus fliplock python driver uninstalled"
-exit 0
+#!/bin/sh
+cat >&2 <<'MESSAGE'
+Automatic legacy uninstallation is retired. For NumberPad, run
+asus-numberpad disable plan and disable apply as the enrolled user before
+removing its distribution package. User configuration is retained.
+Review any historical fliplock installation separately; no broad files,
+permissions or services will be removed by this entrypoint.
+MESSAGE
+exit 2

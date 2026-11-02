@@ -1,0 +1,7 @@
+libevdev
+numpy
+pyinotify
+python-periphery
+pyasyncore
+xkbcommon
+pygobject

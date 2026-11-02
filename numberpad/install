@@ -1,0 +1,18 @@
+#!/bin/sh
+# Staging only. Package installation must never enroll permissions or services.
+set -eu
+if [ "$#" -ne 1 ] || [ -z "$1" ] || [ "$1" = / ]; then
+    echo 'Usage: numberpad/install ABSOLUTE_STAGING_ROOT (never /)' >&2
+    exit 1
+fi
+case $1 in /*) ;; *) exit 1;; esac
+mkdir -p -- "$1"
+root=$(CDPATH='' cd -- "$1" && pwd -P)
+[ "$root" != / ] || { echo 'Refuse canonical host root.' >&2; exit 1; }
+set -- "$root"
+base=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+mkdir -p "$1/usr/bin" "$1/usr/lib/asus-numberpad/asus_numberpad" "$1/usr/share/licenses/asus-numberpad-driver" "$1/usr/share/doc/asus-numberpad-driver"
+install -m755 "$base/asus-numberpad" "$1/usr/bin/asus-numberpad"
+install -m644 "$base"/asus_numberpad/*.py "$1/usr/lib/asus-numberpad/asus_numberpad/"
+install -m644 "$base/../LICENSE.md" "$1/usr/share/licenses/asus-numberpad-driver/LICENSE"
+install -m644 "$base/ORIGINS.md" "$base/README.md" "$1/usr/share/doc/asus-numberpad-driver/"

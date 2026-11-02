@@ -1,0 +1,69 @@
+name: ⭐ Layout request
+description: Add new numpad layout
+title: '[Layout Request] Layout Name'
+labels: ['enhancement', 'numpad layout']
+assignees:
+  - ldrahnik
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please make sure to [test existing layouts](https://github.com/asus-linux-drivers/asus-touchpad-numpad-driver/tree/master/numpad_layouts) before filing this issue!
+
+  - type: input
+    attributes:
+      label: Layout Name
+      placeholder: Layout Name
+
+  - type: input
+    attributes:
+      label: Your device (cat /sys/devices/virtual/dmi/id/product_name)
+      placeholder: Your device
+
+  - type: input
+    attributes:
+      label: Supported Devices
+      description: List all devices that have the same layout as the one you request. If you know of no else leave empty.
+      placeholder: ex. Asus Rog Scar 5, Asus Rog Scar 6
+
+  - type: textarea
+    attributes:
+      label: Numpad Layout (photo/picture or code)
+      description: Attach a picture of the layout (just take a picture of how the numpad layout on the touchpad looks). You can see examples in the Layouts section in the README.
+    validations:
+      required: true
+
+  - type: input
+    attributes:
+      label: Top offset [If exists]
+
+  - type: input
+    attributes:
+      label: Right offset [If exists]
+
+  - type: input
+    attributes:
+      label: Bottom offset [If exists]
+
+  - type: input
+    attributes:
+      label: Left offset [If exists]
+
+  - type: input
+    attributes:
+      label: Top left icon data (width, height)
+
+  - type: input
+    attributes:
+      label: Top right icon data (width, height) (numlock key)
+
+  - type: textarea
+    attributes:
+      label: Additional Info
+
+  - type: checkboxes
+    attributes:
+      label: Acknowledgements
+      options:
+        - label: This layout doesn't currently exist and I have read the [Layout section](https://github.com/asus-linux-drivers/asus-numberpad-driver?tab=readme-ov-file#layouts)
+          required: true

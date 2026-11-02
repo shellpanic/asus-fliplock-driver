@@ -3,6 +3,7 @@
 import importlib
 import logging
 import os
+from time import sleep
 import re
 import sys
 from typing import Optional
@@ -41,14 +42,14 @@ def search_devices():
         with open('/proc/bus/input/devices', 'r') as f:
             lines = f.readlines()
             for line in lines:
-                    
+
                 # Look for the device switches
                 if re.search("switches", line):
                     switches_detected = 1
                     log.debug('Detect switches from %s', line.strip())
 
-                # Look for the device wmi hotkeys
-                if wmi_hotkeys_detected == 0 and ("Name=\"Asus WMI hotkeys" in line):
+                # Look for the device wmi hotkey or https://github.com/asus-linux-drivers/asus-accel-tablet-mode-driver
+                if wmi_hotkeys_detected == 0 and (("Name=\"Asus WMI hotkeys" in line and tries == 4) or ("Name=\"Asus WMI accel tablet mode" in line and tries == 5)):
                     wmi_hotkeys_detected = 1
                     log.debug('Detect wmi hotkeys from %s', line.strip())
 
@@ -71,12 +72,13 @@ def search_devices():
                 if switches_detected == 2 and wmi_hotkeys_detected == 2:
                     break
 
-        if switches_detected != 2:
+        if switches_detected != 2 or wmi_hotkeys_detected != 2:
             tries -= 1
             if tries == 0:
                 if switches_detected != 2 and wmi_hotkeys_detected != 2:
                     log.error("Can't find neither switches or wmi hotkeys device")
                     sys.exit(1)
+            sleep(0.1)
         else:
             break
 
@@ -104,14 +106,14 @@ def execute_cmds_in_array(cmds):
         execute_cmd(cmd)
 
 
-def flip(intel_hid_switches_tablet_mode):    
+def flip(intel_hid_switches_tablet_mode):
     if intel_hid_switches_tablet_mode:
         execute_cmds_in_array(fliplock_layouts.tablet_mode_actions)
     else:
         execute_cmds_in_array(fliplock_layouts.laptop_mode_actions)
 
 
-# If mode has been changed, do something        
+# If mode has been changed, do something
 if switches is None and wmi_hotkeys is not None:
 
     for e in d_t_wmi_hotkeys.events():
@@ -126,6 +128,10 @@ if switches is None and wmi_hotkeys is not None:
             flip(intel_hid_switches_tablet_mode)
             intel_hid_switches_tablet_mode = not intel_hid_switches_tablet_mode
 
+        # TODO: first flip is ommited because device for swithes is added immediately when is flip_key (usually EV_KEY.KEY_PROG2) triggered
+        # dmegs:
+        # [ 4685.611692] intel-hid INTC1051:00: switch event received, enable switches supports
+        # [ 4685.611762] input: Intel HID switches as /devices/platform/INTC1051:00/input/input37
         search_devices()
 
 
