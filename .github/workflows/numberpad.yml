@@ -14,7 +14,7 @@ jobs:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y python3 python3-gi dbus libxkbcommon0 xkb-data shellcheck
       - run: PYTHONPATH=numberpad python3 -m unittest discover -s numberpad/tests -v
-      - run: python3 -m compileall -q numberpad/asus_numberpad && sh -n numberpad/install && shellcheck numberpad/install numberpad/test-session.sh
+      - run: python3 -m compileall -q numberpad/asus_numberpad && sh -n numberpad/install && shellcheck install.sh uninstall.sh numberpad/install numberpad/test-session.sh
   distributions:
     runs-on: ubuntu-24.04
     strategy:
