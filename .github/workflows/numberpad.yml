@@ -1,0 +1,17 @@
+name: NumberPad checks
+on:
+  push:
+    branches: [master, numberpad-v2]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  unit-and-staging:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y python3 libxkbcommon0 xkb-data shellcheck
+      - run: PYTHONPATH=numberpad python3 -m unittest discover -s numberpad/tests -v
+      - run: python3 -m compileall -q numberpad/asus_numberpad && sh -n numberpad/install && shellcheck numberpad/install
