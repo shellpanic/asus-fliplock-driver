@@ -4,9 +4,10 @@ Implementation candidate; no validated hardware support is claimed.
 
 | Environment | Evidence | Limit |
 |---|---|---|
-| Local Linux/Python, libxkbcommon 1.13.2 | 21 unit/fault-injection tests pass; all printed b7402 cells, exact/unknown/ambiguous discovery, icon hold/lift, cleanup, actual US/DE/FR keymap parsing, configuration preservation, permissions revocation after ambiguous discovery, slot-state ioctl recovery, inhibitor pipe lifetime/SIGKILL | Input/kernel calls mocked except keymap library and process lifetime; no physical input |
-| Disposable Void glibc container | Initial 15 tests and package staging pass with Python evdev 1.7.1_2, xkbcommon tools 1.13.2_1, elogind 252.39_1; installed CLI --help succeeds; xkbcli dump subcommands/options verified | No booted runit graphical login or physical devices; final expanded suite rerun recorded in delivery |
-| Disposable Debian 12/systemd packages | Initial 15 tests and staging pass | xkbcommon 1.5.0 lacks dump-keymap commands: runtime must refuse; install current tools >=1.8 explicitly, never automatic package upgrades. This is not Debian runtime acceptance |
+| Local Linux/Python, libxkbcommon 1.13.2 | 22 unit/fault-injection tests pass; all printed b7402 cells, exact/unknown/ambiguous discovery, icon hold/lift, cleanup, actual US/DE/FR keymap parsing, configuration preservation, permissions revocation after ambiguous discovery, slot-state ioctl recovery, inhibitor pipe lifetime/SIGKILL | Input/kernel calls mocked except keymap library and process lifetime; no physical input |
+| Disposable Void glibc container | All 22 tests (no skips), restricted private system-style D-Bus signal test and package staging pass with Python evdev 1.7.1_2, xkbcommon tools 1.13.2_1, elogind 252.39_1; installed CLI --help succeeds; xkbcli dump subcommands/options verified | No booted runit graphical login or physical devices; final expanded suite rerun recorded in delivery |
+| Disposable Debian 12/systemd packages | All 22 tests (no skips), restricted private system-style D-Bus signal test and staging pass | xkbcommon 1.5.0 lacks dump-keymap commands: runtime must refuse; install current tools >=1.8 explicitly, never automatic package upgrades. This is not Debian runtime acceptance |
+| Real runit supervision (Void and Debian containers) | Session supervisor starts/stops/restarts twice without orphaned runsv; canonical root aliases refused | Harmless fixture child, no input hardware; systemd unit syntax also verified in Debian |
 | X11 live input | Pending | Keymap library tests alone do not establish compositor input |
 | Sway Wayland live input | Pending | No Wayland support acceptance claim |
 | GNOME Wayland live input | Pending | No Wayland support acceptance claim |

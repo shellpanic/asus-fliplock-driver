@@ -14,4 +14,19 @@ jobs:
           persist-credentials: false
       - run: sudo apt-get update && sudo apt-get install -y python3 python3-gi dbus libxkbcommon0 xkb-data shellcheck
       - run: PYTHONPATH=numberpad python3 -m unittest discover -s numberpad/tests -v
-      - run: python3 -m compileall -q numberpad/asus_numberpad && sh -n numberpad/install && shellcheck numberpad/install
+      - run: python3 -m compileall -q numberpad/asus_numberpad && sh -n numberpad/install && shellcheck numberpad/install numberpad/test-session.sh
+  distributions:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        distro: [void, debian]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - if: matrix.distro == 'void'
+        run: |
+          curl --fail --location --retry 3 https://repo-de.voidlinux.org/live/current/void-x86_64-ROOTFS-20250202.tar.xz -o rootfs.tar.xz
+          echo '3f48e6673ac5907a897d913c97eb96edbfb230162731b4016562c51b3b8f1876  rootfs.tar.xz' | sha256sum -c -
+      - run: docker build -f numberpad/test-${{ matrix.distro }}.Dockerfile -t numberpad-test .
+      - run: docker run --rm -e NUMBERPAD_DISPOSABLE_TEST=1 numberpad-test /source/numberpad/test-session.sh

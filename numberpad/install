@@ -1,7 +1,10 @@
 #!/bin/sh
 # Staging only. Package installation must never enroll permissions or services.
 set -eu
-[ "$#" -eq 1 ] && [ -n "$1" ] && [ "$1" != / ] || { echo 'Usage: numberpad/install ABSOLUTE_STAGING_ROOT (never /)' >&2; exit 1; }
+if [ "$#" -ne 1 ] || [ -z "$1" ] || [ "$1" = / ]; then
+    echo 'Usage: numberpad/install ABSOLUTE_STAGING_ROOT (never /)' >&2
+    exit 1
+fi
 case $1 in /*) ;; *) exit 1;; esac
 mkdir -p -- "$1"
 root=$(CDPATH='' cd -- "$1" && pwd -P)
