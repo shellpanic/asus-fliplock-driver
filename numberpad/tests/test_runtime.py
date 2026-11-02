@@ -121,7 +121,11 @@ class ProcessTests(unittest.TestCase):
             deadline = time.monotonic() + 3
             while time.monotonic() < deadline:
                 proc = Path(f'/proc/{child}/stat')
-                if not proc.exists() or proc.read_text().split()[2] == 'Z':
+                try:
+                    state = proc.read_text().split()[2]
+                except (FileNotFoundError, ProcessLookupError):
+                    break
+                if state == 'Z':
                     break
                 time.sleep(.05)
             else:
