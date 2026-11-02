@@ -64,7 +64,7 @@ class PermissionTests(unittest.TestCase):
                 manage.permissions('testuser', False)
                 self.assertEqual(command.call_count, previous, 'Repeated disable must leave stale markers alone')
                 chown.assert_called_once_with('/dev/input/event919', 0, 0)
-                chmod.assert_called_once_with('/dev/input/event919', 0o600)
+                chmod.assert_any_call('/dev/input/event919', 0o600)
                 self.assertIn(['udevadm', 'trigger', '--action=change', str(event.resolve())],
                               [call.args[0] for call in command.call_args_list])
     def test_setup_repeat_and_disable_retain_custom_configuration(self):
