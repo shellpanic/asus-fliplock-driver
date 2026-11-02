@@ -50,7 +50,7 @@ class PermissionTests(unittest.TestCase):
                 if str(path) == '/dev/input/event919':
                     return SimpleNamespace(st_uid=1001)
                 return real_stat(path, *args, **kwargs)
-            with patch.object(manage, 'RULE', rule), patch.object(manage, 'SYS_CLASS', sys), \
+            with patch.object(manage, 'RULE', rule), patch.object(manage, 'SYS_CLASS', sys), patch.object(manage, 'ENROLLMENT', root / 'enrollment.json'), \
                  patch.object(manage.os, 'getuid', return_value=0), \
                  patch.object(manage.pwd, 'getpwnam', return_value=account), \
                  patch.object(manage, 'probe', side_effect=ValueError('ambiguous')), \
@@ -60,6 +60,9 @@ class PermissionTests(unittest.TestCase):
                 rule.write_text(manage.rules('testuser'))
                 manage.permissions('testuser', False)
                 self.assertFalse(rule.exists())
+                previous = command.call_count
+                manage.permissions('testuser', False)
+                self.assertEqual(command.call_count, previous, 'Repeated disable must leave stale markers alone')
                 chown.assert_called_once_with('/dev/input/event919', 0, 0)
                 chmod.assert_called_once_with('/dev/input/event919', 0o600)
                 self.assertIn(['udevadm', 'trigger', '--action=change', str(event.resolve())],
@@ -76,7 +79,7 @@ class PermissionTests(unittest.TestCase):
                  patch.object(manage, 'probe', return_value={'profile': 'b7402'}), \
                  patch.object(manage.shutil, 'which', return_value='/fake/tool'), \
                  patch.object(manage.subprocess, 'run'), \
-                 patch.dict('sys.modules', evdev=SimpleNamespace(InputDevice=object)), \
+                 patch.dict('sys.modules', evdev=SimpleNamespace(InputDevice=object), gi=SimpleNamespace(require_version=lambda *_: None)), \
                  patch.object(manage.sys.stdin, 'isatty', return_value=True), \
                  patch('builtins.input', return_value='apply'), \
                  patch.object(manage, 'auth') as auth, patch.object(manage, 'stop_session'):

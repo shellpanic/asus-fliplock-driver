@@ -18,7 +18,7 @@ Unfolding/resume does not activate it. No compositor tapping settings are edited
 ## Dependencies and installation
 
 Distribution packages only: Python 3.10+, python-evdev, libxkbcommon (including
-xkbcli dump-keymap-x11 and dump-keymap-wayland tools, version >=1.8), udev, dbus-monitor,
+xkbcli dump-keymap-x11 and dump-keymap-wayland tools, version >=1.8), udev, PyGObject/Gio,
 logind/elogind (loginctl and systemd-inhibit/elogind-inhibit), and either systemd
 user services or runit (runsvdir/sv). Void currently packages the Python binding
 as python3-evdev; libxkbcommon-tools supplies xkbcli. Debian with sufficiently recent xkbcommon tools uses

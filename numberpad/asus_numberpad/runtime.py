@@ -13,6 +13,7 @@ from .engine import Engine
 from .hardware import illuminate
 from .keymap import session_map, resolve
 from .inhibit import DelayInhibitor
+from .sleep import SleepSignals
 
 
 def session_active(session):
@@ -82,7 +83,7 @@ def run(hold=1.0):
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     device = probe()
     pressed = []
-    touch = switch = output = monitor = engine = inhibitor = None
+    touch = switch = output = signals = engine = inhibitor = None
     grabbed = False
     stopping = False
     old_handlers = {}
@@ -116,50 +117,21 @@ def run(hold=1.0):
         engine = Engine(send, grab, lambda on: illuminate(device['adapter'], on),
                         (x.min, x.max, y.min, y.max), hold)
         engine.blocked = bool(slots.contacts())
-        # A delay inhibitor prevents sleep until cleanup completes. The monitor
-        # sees PrepareForSleep, and exiting releases the inherited inhibitor FD.
-        monitor = subprocess.Popen(['dbus-monitor', '--system',
-            "type='signal',sender='org.freedesktop.login1',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        os.set_blocking(monitor.stdout.fileno(), False)
-        # BecomeMonitor causes NameLost after subscription. NameAcquired alone
-        # precedes subscription and cannot serve as the readiness barrier.
-        sleep_buffer = b''
-        deadline = time.monotonic() + 3
-        with selectors.DefaultSelector() as ready:
-            ready.register(monitor.stdout, selectors.EVENT_READ)
-            while b'member=NameLost' not in sleep_buffer:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0 or not ready.select(remaining):
-                    raise ValueError('Suspend monitor did not become ready')
-                message = os.read(monitor.stdout.fileno(), 8192)
-                if not message:
-                    raise ValueError('Suspend monitor exited during subscription')
-                sleep_buffer += message
-        if b'boolean true' in sleep_buffer:
-            return
+        # Subscribe before acquiring the delay inhibitor or enabling gestures.
+        signals = SleepSignals()
         inhibitor = DelayInhibitor()
         selector = selectors.DefaultSelector()
         selector.register(touch, selectors.EVENT_READ, 'touch')
         selector.register(switch, selectors.EVENT_READ, 'switch')
-        selector.register(monitor.stdout, selectors.EVENT_READ, 'sleep')
         for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
             old_handlers[sig] = signal.signal(sig, stop)
         tablet = tablet_mode(switch)
         dropped = False
         last_check = 0
         while not stopping:
+            if signals.poll():
+                return
             for key, _ in selector.select(.05):
-                if key.data == 'sleep':
-                    message = os.read(monitor.stdout.fileno(), 8192)
-                    if not message:
-                        raise ValueError('Lost suspend monitor')
-                    sleep_buffer += message
-                    lines = sleep_buffer.split(b'\n')
-                    sleep_buffer = lines.pop()
-                    if any(line.strip() == b'boolean true' for line in lines):
-                        return
-                    continue
                 source = touch if key.data == 'touch' else switch
                 for event in list(source.read()):
                     if event.type == c.EV_SYN and event.code == c.SYN_DROPPED:
@@ -202,8 +174,6 @@ def run(hold=1.0):
                     # Stop rather than inject keys using a stale map. Supervision
                     # can restart in the new map, always with NumberPad off.
                     return
-                if monitor.poll() is not None:
-                    raise ValueError('Suspend monitor exited')
                 last_check = now
             if not dropped:
                 engine.frame(slots.contacts(), now, not tablet)
@@ -219,9 +189,8 @@ def run(hold=1.0):
                     opened.close()
             if inhibitor:
                 inhibitor.close()
-            if monitor:
-                monitor.terminate()
-                monitor.wait(timeout=3)
+            if signals:
+                signals.close()
             for sig, handler in old_handlers.items():
                 signal.signal(sig, handler)
             lock.close()

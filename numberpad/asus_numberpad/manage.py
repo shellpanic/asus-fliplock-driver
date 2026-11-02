@@ -13,6 +13,7 @@ from .discovery import probe
 BIN = '/usr/bin/asus-numberpad'
 RULE = Path('/etc/udev/rules.d/70-asus-numberpad.rules')
 SYS_CLASS = Path('/sys/class')
+ENROLLMENT = Path('/var/lib/asus-numberpad/enrollment.json')
 MARKER = '# Owned by shellpanic/asus-fliplock-driver NumberPad v2\n'
 AUTOSTART = ('[Desktop Entry]\nType=Application\nName=ASUS NumberPad\n'
              'Exec=/usr/bin/asus-numberpad session\nTerminal=false\n'
@@ -50,7 +51,16 @@ def permissions(user, enable):
     if os.getuid() != 0:
         raise ValueError('Permission enrollment requires native authentication')
     content = rules(user)
-    check_owned(RULE, content)
+    state = json.dumps({'owner': user}, sort_keys=True) + '\n'
+    clearing = MARKER + f'ENV{{ASUS_NUMBERPAD_OWNER}}=="{user}", ENV{{ASUS_NUMBERPAD_OWNER}}=""\n'
+    if RULE.is_symlink() or (RULE.exists() and RULE.read_text() not in (content, clearing)):
+        raise ValueError(f'Preserve existing unowned file: {RULE}')
+    check_owned(ENROLLMENT, state)
+    if not enable and not RULE.exists() and not ENROLLMENT.exists():
+        return  # already disabled; never act on stale udev properties
+    if enable:
+        if RULE.exists() and RULE.read_text() != content:
+            raise ValueError('Finish interrupted disable before enrolling again')
     device = None
     try:
         device = probe()
@@ -58,13 +68,19 @@ def permissions(user, enable):
         if enable:
             raise
     if enable:
+        ENROLLMENT.parent.mkdir(parents=True, exist_ok=True)
+        if not ENROLLMENT.exists():
+            with ENROLLMENT.open('x') as stream:
+                stream.write(state)
         RULE.parent.mkdir(parents=True, exist_ok=True)
         if not RULE.exists():
             with RULE.open('x') as stream:
                 stream.write(content)
             RULE.chmod(0o644)
-    elif RULE.exists():
-        RULE.unlink()
+    else:
+        RULE.parent.mkdir(parents=True, exist_ok=True)
+        RULE.write_text(clearing)
+        RULE.chmod(0o644)
     subprocess.run(['udevadm', 'control', '--reload-rules'], check=True)
     paths = [Path('/sys/class/misc/uinput').resolve()]
     if device:
@@ -93,6 +109,11 @@ def permissions(user, enable):
         if path.exists():
             subprocess.run(['udevadm', 'trigger', '--action=change', str(path)], check=True)
     subprocess.run(['udevadm', 'settle', '--timeout=5'], check=True)
+    if not enable:
+        RULE.unlink()
+        subprocess.run(['udevadm', 'control', '--reload-rules'], check=True)
+        if ENROLLMENT.exists():
+            ENROLLMENT.unlink()
 
 
 def match(path):
@@ -135,17 +156,20 @@ def setup(enable, apply):
         check_owned(path, value)
     if enable:
         print(json.dumps(probe(), indent=2))
-        for binary in ('udevadm', 'loginctl', 'dbus-monitor', 'xkbcli'):
+        for binary in ('udevadm', 'loginctl', 'xkbcli'):
             if not shutil.which(binary):
                 raise ValueError(f'Missing dependency: {binary}')
         if not (shutil.which('systemd-inhibit') or shutil.which('elogind-inhibit')):
             raise ValueError('Missing logind/elogind delay inhibitor')
         for kind in ('x11', 'wayland'):
             subprocess.run(['xkbcli', 'dump-keymap-' + kind, '--help'], check=True, stdout=subprocess.DEVNULL)
+        import gi
+        gi.require_version('Gio', '2.0')
         from evdev import InputDevice  # dependency check only; no device opened
         del InputDevice
         if not shutil.which('systemctl') and not shutil.which('runsvdir'):
             raise ValueError('Install runit or systemd user supervision')
+    print(f'Root enrollment files: {RULE}, {ENROLLMENT}; no event/bus numbers retained')
     print(('Enroll' if enable else 'Remove') + ' device-scoped permissions for ' + pwd.getpwuid(os.getuid()).pw_name)
     print('Permission scope: selected touchpad and tablet switch; entire resolved I2C adapter (all its addresses); uinput can inject arbitrary input. No physical keyboard or input-group membership.')
     print(('Create' if enable else 'Remove owned') + ' user files: ' + ', '.join(str(p) for p in files))
@@ -211,7 +235,7 @@ def session():
     if shutil.which('systemctl') and subprocess.run(['systemctl', '--user', 'show-environment'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
         # Explicit allowlist of the current session; no baked-in credentials.
         names = ['DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'XDG_SESSION_TYPE',
-                 'XDG_SESSION_ID', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS']
+                 'XDG_SESSION_ID', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'XDG_CONFIG_HOME']
         subprocess.run(['systemctl', '--user', 'unset-environment', *names], check=True)
         subprocess.run(['systemctl', '--user', 'import-environment', *[n for n in names if n in os.environ]], check=True)
         subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)

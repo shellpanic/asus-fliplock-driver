@@ -1,5 +1,5 @@
 FROM lazyvoid-qa:workspace
-RUN xbps-install -Sy python3-evdev libxkbcommon-tools elogind dbus runit && xbps-query -p pkgver python3-evdev && xkbcli dump-keymap-wayland --help && xkbcli dump-keymap-x11 --help
+RUN xbps-install -Sy python3-evdev python3-gobject libxkbcommon-tools elogind dbus runit && xbps-query -p pkgver python3-evdev && xkbcli dump-keymap-wayland --help && xkbcli dump-keymap-x11 --help
 COPY . /source
 WORKDIR /source
 ENV PYTHONPATH=/source/numberpad
