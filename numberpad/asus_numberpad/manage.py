@@ -203,7 +203,22 @@ def stop_session():
         subprocess.run(['systemctl', '--user', 'stop', 'asus-numberpad.service'], check=False)
     runtime = Path(os.environ['XDG_RUNTIME_DIR']) / 'asus-numberpad-runit'
     if runtime.exists() and shutil.which('sv'):
-        subprocess.run(['sv', 'down', str(runtime / 'driver')], check=True)
+        result = subprocess.run(['sv', 'down', str(runtime / 'driver')], check=False)
+        if result.returncode:
+            # session() leaves its directory after runsv exits. A stale directory
+            # must not prevent revocation, but a live unresponsive runsv must.
+            # runsv holds this flock for its entire lifetime; retain it while
+            # recovery checks the separate foreground-runtime lock.
+            import fcntl
+            supervise = runtime / 'driver' / 'supervise'
+            supervise.mkdir(parents=True, exist_ok=True)
+            with (supervise / 'lock').open('a') as lock:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise ValueError('Unable to stop live runit supervisor; retry disable after stopping it') from None
+                recover(missing_ok=True)
+            return
     # Lock ownership coordinates recovery with a possibly foreground runtime.
     recover(missing_ok=True)
 

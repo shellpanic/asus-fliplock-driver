@@ -111,8 +111,10 @@ class DiscoveryTests(unittest.TestCase):
             sys = self.fixture(Path(temporary))
             found = probe(sys, Path('/fake/dev'))
             self.assertEqual(found['profile'], 'b7402')
-            self.assertEqual(found['event'], '/fake/dev/event91')
+            self.assertEqual(found['event'], '/fake/dev/input/event91')
             self.assertEqual(found['adapter'], '/fake/dev/i2c-57')
+            self.assertEqual(found['switch']['event'], '/fake/dev/input/event12')
+            self.assertEqual(found['uinput'], '/fake/dev/uinput')
             self.assertEqual(found['physical_acceptance'], 'pending')
     def test_unknown_and_ambiguous_refused(self):
         for kwargs in ({'model': 'B5402CBA'}, {'duplicate': True}):

@@ -1,4 +1,5 @@
 import array
+import fcntl
 import os
 from pathlib import Path
 import signal
@@ -89,6 +90,64 @@ class PermissionTests(unittest.TestCase):
                 self.assertEqual(auth.call_count, 3)
                 self.assertEqual(custom.read_text(), '{"hold_seconds": 2.5, "personal": "retained"}')
                 self.assertTrue(all(not path.exists() for path in manage.user_files()))
+
+
+class StoppedSessionTests(unittest.TestCase):
+    def test_disable_after_supervisor_exit_revokes_and_preserves_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / 'runtime'
+            (runtime / 'asus-numberpad-runit/driver/supervise').mkdir(parents=True)
+            config = root / 'config'
+            saved = config / 'asus-numberpad/config.json'
+            saved.parent.mkdir(parents=True)
+            saved.write_text('{"hold_seconds": 2.5}')
+            def which(name):
+                return '/usr/bin/sv' if name == 'sv' else None
+            with patch.dict(os.environ, XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(config)), \
+                 patch.object(manage.os, 'getuid', return_value=1001), \
+                 patch.object(manage.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='testuser')), \
+                 patch.object(manage.shutil, 'which', side_effect=which), \
+                 patch.object(manage.subprocess, 'run', return_value=SimpleNamespace(returncode=1)), \
+                 patch.object(manage, 'recover') as recover, patch.object(manage, 'auth') as auth, \
+                 patch.object(manage.sys.stdin, 'isatty', return_value=True), \
+                 patch('builtins.input', return_value='apply'):
+                for path, value in manage.user_files().items():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(value)
+                manage.setup(False, True)
+                auth.assert_called_once_with(False)
+                recover.assert_called_once_with(missing_ok=True)
+                self.assertTrue(all(not path.exists() for path in manage.user_files()))
+                self.assertEqual(saved.read_text(), '{"hold_seconds": 2.5}')
+    def test_failed_stop_of_live_supervisor_refuses_recovery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary) / 'asus-numberpad-runit'
+            supervise = runtime / 'driver/supervise'
+            supervise.mkdir(parents=True)
+            with (supervise / 'lock').open('a') as held:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.dict(os.environ, XDG_RUNTIME_DIR=temporary), \
+                     patch.object(manage.shutil, 'which', side_effect=lambda name: '/usr/bin/sv' if name == 'sv' else None), \
+                     patch.object(manage.subprocess, 'run', return_value=SimpleNamespace(returncode=1)), \
+                     patch.object(manage, 'recover') as recover:
+                    with self.assertRaisesRegex(ValueError, 'live runit supervisor'):
+                        manage.stop_session()
+                    recover.assert_not_called()
+    def test_stale_supervisor_does_not_bypass_live_foreground_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary)
+            (runtime / 'asus-numberpad-runit/driver/supervise').mkdir(parents=True)
+            with (runtime / 'asus-numberpad.lock').open('a') as held:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.dict(os.environ, XDG_RUNTIME_DIR=temporary), \
+                     patch.object(manage.os, 'getuid', return_value=runtime.stat().st_uid), \
+                     patch.object(manage.shutil, 'which', side_effect=lambda name: '/usr/bin/sv' if name == 'sv' else None), \
+                     patch.object(manage.subprocess, 'run', return_value=SimpleNamespace(returncode=1)), \
+                     patch.object(manage, 'probe') as probe:
+                    with self.assertRaisesRegex(ValueError, 'Driver still running'):
+                        manage.stop_session()
+                    probe.assert_not_called()
 
 
 class ProcessTests(unittest.TestCase):

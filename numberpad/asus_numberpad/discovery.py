@@ -23,7 +23,7 @@ def probe(sys=Path('/sys'), dev=Path('/dev'), require_switch=True):
         except (OSError, ValueError):
             continue
         if sw & 2 and not ev & 2:  # SW_TABLET_MODE, no physical keyboard access
-            switches.append({'event': str(dev / event.name), 'sysfs': str(event.resolve())})
+            switches.append({'event': str(dev / 'input' / event.name), 'sysfs': str(event.resolve())})
         if (model != MODEL or vendor != '04F3' or product != '3230'
                 or not name.startswith('ASUE') or not name.endswith('Touchpad')):
             continue
@@ -32,7 +32,7 @@ def probe(sys=Path('/sys'), dev=Path('/dev'), require_switch=True):
         if len(adapters) != 1:
             continue
         adapter = adapters[0]
-        matches.append({'event': str(dev / event.name), 'sysfs': str(event.resolve()),
+        matches.append({'event': str(dev / 'input' / event.name), 'sysfs': str(event.resolve()),
                         'name': name, 'adapter': str(dev / adapter.name),
                         'adapter_sysfs': str((sys / 'class/i2c-dev' / adapter.name).resolve()),
                         'vendor': vendor, 'product': product, 'profile': 'b7402'})
