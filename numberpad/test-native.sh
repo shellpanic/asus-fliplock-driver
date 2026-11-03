@@ -135,7 +135,7 @@ from pathlib import Path
 meta=json.loads(Path('/tmp/numberpad-fixture/runtime/asus-numberpad.json').read_text())
 pid=meta['pid']
 assert meta['uid']==1987
-assert Path('/proc/'+str(pid)+'/exe').resolve()==Path('/usr/bin/asus-numberpad')
+assert Path('/proc/'+str(pid)+'/exe').samefile('/usr/bin/asus-numberpad')
 Path('/tmp/numberpad-fixture/killed-token').write_text(meta['token'])
 os.kill(pid,signal.SIGKILL)
 KILL_RUNTIME
