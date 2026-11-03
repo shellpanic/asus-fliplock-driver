@@ -129,14 +129,14 @@ qa 'asus-numberpad install apply --yes'
 [ -f "$base/runtime/asus-numberpad.json" ]
 # Real runit must restart a SIGKILLed owned runtime with fresh control identity.
 qa 'asus-numberpad status' > "$base/before-kill.json"
-python3 - <<'KILL_RUNTIME'
+qa 'python3 -' <<'KILL_RUNTIME'
 import json,os,signal
 from pathlib import Path
 meta=json.loads(Path('/tmp/numberpad-fixture/runtime/asus-numberpad.json').read_text())
 pid=meta['pid']
 assert meta['uid']==1987
 assert Path('/proc/'+str(pid)+'/exe').samefile('/usr/bin/asus-numberpad')
-Path('/tmp/numberpad-fixture/killed-token').write_text(meta['token'])
+Path('/tmp/numberpad-fixture/runtime/killed-token').write_text(meta['token'])
 os.kill(pid,signal.SIGKILL)
 KILL_RUNTIME
 attempt=0
@@ -145,7 +145,7 @@ import json
 from pathlib import Path
 try:
     meta=json.loads(Path('/tmp/numberpad-fixture/runtime/asus-numberpad.json').read_text())
-    assert meta['ready'] and meta['token'] != Path('/tmp/numberpad-fixture/killed-token').read_text()
+    assert meta['ready'] and meta['token'] != Path('/tmp/numberpad-fixture/runtime/killed-token').read_text()
 except (OSError,ValueError,AssertionError): raise SystemExit(1)
 RESTARTED
 do attempt=$((attempt+1)); [ "$attempt" -lt 90 ] || exit 1; sleep .1; done
