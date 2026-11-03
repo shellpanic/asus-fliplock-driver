@@ -57,3 +57,22 @@ usage. This personal fork cannot directly use the organization's runner pool.
 External-fork PRs are excluded from the Umatix self-hosted jobs. Fork changes
 must be independently reviewed, then validated through the reviewed Lazyvoid
 pin update; an unpinned fork PR does not automatically receive CI checks.
+
+
+## Console-started X11 compatibility (2026-11-03)
+
+The user-present preflight reported DISPLAY=:0 with XDG_SESSION_TYPE=tty and
+elogind Type=tty, Active=yes, LockedHint=no, Remote=no. This is not yet physical
+NumberPad acceptance. The adapter now selects X11 for that narrow local-display
+case without rewriting session variables. It rejects SSH/Wayland ambiguity,
+nonlocal X display syntax, mismatched login type, inactive/locked/remote logins
+and another session owner. Native X11/Wayland paths retain matching type checks.
+
+The runtime authenticates to the actual X server and resolves the keymap before
+any input open or I2C write, including cleanup when the display cannot be reached.
+Five regression tests cover selection, login gating, rejected contexts, native
+protocols and display failure without hardware writes. Local suite: 31 pass,
+one private-bus prerequisite skip. The disposable Void fixture additionally
+starts an authenticated Xvfb server as a regular user and verifies tty/X11 keymap
+retrieval plus refusal without the X cookie. Runner evidence is recorded in the
+PR; all physical keypad and compositor-input acceptance remains pending.
