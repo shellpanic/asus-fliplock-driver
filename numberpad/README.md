@@ -72,7 +72,7 @@ udev rules. Modified/unowned files are refused, never removed. Configuration at
 `recover` requires the runtime to have stopped, acquires its lock and turns off
 illumination. The kernel releases grabs and uinput devices on process death.
 SIGKILL/power loss cannot run cleanup; restart/recover resets illumination before
-any input grab. Stop a foreground `run` process before disabling. An unplugged
+any input grab. Stop a foreground `run` process and Ctrl-C the attached runit `session` supervisor before disabling. Disable refuses a live runit session parent and holds its session lock through permission revocation. An unplugged
 unknown device cannot be illuminated by recovery; permission/startup removal can
 still proceed. Never use a stale bus number for recovery.
 

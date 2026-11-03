@@ -74,7 +74,7 @@ class PermissionTests(unittest.TestCase):
             custom = config / 'asus-numberpad/config.json'
             custom.parent.mkdir()
             custom.write_text('{"hold_seconds": 2.5, "personal": "retained"}')
-            with patch.dict(os.environ, XDG_CONFIG_HOME=temporary), \
+            with patch.dict(os.environ, XDG_CONFIG_HOME=temporary, XDG_RUNTIME_DIR=temporary), \
                  patch.object(manage.os, 'getuid', return_value=1001), \
                  patch.object(manage.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='testuser')), \
                  patch.object(manage, 'probe', return_value={'profile': 'b7402'}), \
@@ -120,6 +120,34 @@ class StoppedSessionTests(unittest.TestCase):
                 recover.assert_called_once_with(missing_ok=True)
                 self.assertTrue(all(not path.exists() for path in manage.user_files()))
                 self.assertEqual(saved.read_text(), '{"hold_seconds": 2.5}')
+    def test_live_parent_without_runsv_blocks_disable_before_revocation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.dict(os.environ, XDG_RUNTIME_DIR=temporary, XDG_CONFIG_HOME=temporary), \
+                 patch.object(manage.os, 'getuid', return_value=1001), \
+                 patch.object(manage.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='testuser')), \
+                 patch.object(manage.sys.stdin, 'isatty', return_value=True), \
+                 patch('builtins.input', return_value='apply'), \
+                 patch.object(manage, 'auth') as auth, patch.object(manage, 'stop_session') as stop:
+                # Same guard held by session() even before runsvdir creates a child.
+                with manage.session_guard():
+                    with self.assertRaisesRegex(ValueError, 'session supervisor'):
+                        manage.setup(False, True)
+                auth.assert_not_called()
+                stop.assert_not_called()
+    def test_disable_guard_remains_held_during_revocation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            def revoke(enable):
+                self.assertFalse(enable)
+                with self.assertRaisesRegex(ValueError, 'session supervisor'):
+                    with manage.session_guard():
+                        self.fail('session start entered during revocation')
+            with patch.dict(os.environ, XDG_RUNTIME_DIR=temporary, XDG_CONFIG_HOME=temporary), \
+                 patch.object(manage.os, 'getuid', return_value=1001), \
+                 patch.object(manage.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='testuser')), \
+                 patch.object(manage.sys.stdin, 'isatty', return_value=True), \
+                 patch('builtins.input', return_value='apply'), \
+                 patch.object(manage, 'auth', side_effect=revoke), patch.object(manage, 'stop_session'):
+                manage.setup(False, True)
     def test_failed_stop_of_live_supervisor_refuses_recovery(self):
         with tempfile.TemporaryDirectory() as temporary:
             runtime = Path(temporary) / 'asus-numberpad-runit'

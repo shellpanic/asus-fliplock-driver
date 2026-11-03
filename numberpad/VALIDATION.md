@@ -28,12 +28,15 @@ an injected device root.
 
 Disable now tolerates the runtime directory left by an exited runit supervisor.
 If `sv down` fails, it must acquire runsv's supervisor lock before attempting
-recovery. A live supervisor or foreground driver still prevents cleanup.
+recovery. A session-lifetime lock also serializes the runit parent against
+disable through permission revocation, including intervals without a runsv
+child. Stop the attached session parent before disable. A live supervisor or
+foreground driver still prevents cleanup.
 Regressions cover stale-supervisor disable/config preservation, failed live
 supervisor stop, and a live foreground lock. Disposable session tests also
 exercise stop_session after the real fixture supervisor exits.
 
-Local suite: 24 pass, one private-bus dependency skip. New checks use disposable
+Local suite: 26 pass, one private-bus dependency skip. New checks use disposable
 files/process locks and command doubles; no permission enrollment, hardware
 input, I2C writes or session changes were performed. Distribution CI evidence
 is recorded in the delivery PR. All live graphical and physical acceptance
