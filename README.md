@@ -2,9 +2,9 @@
 
 This public fork preserves its original fliplock history and adds a separately
 attributed optional [NumberPad component](numberpad/README.md). The maintained
-version target is **3.0.0 (native Rust)**, independent of imported NumberPad **v7.3.0 + two
-recovery fixes**. Exact hardware mapping is provisional; hardware and graphical
-acceptance are pending, not claims of working support.
+version target is **1.0.0 (native Rust)**, independent of imported NumberPad **v7.3.0 + two
+recovery fixes**. Basic exact-model Rust input and install/remove acceptance has been observed;
+physical fold/suspend and other desktops remain unverified.
 
 [Origins and licenses](numberpad/ORIGINS.md) · [Validation](numberpad/VALIDATION.md)
 

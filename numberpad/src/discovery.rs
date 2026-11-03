@@ -105,7 +105,7 @@ pub fn discover(sys: &Path, dev: &Path, require_switch: bool) -> Result<Device> 
             profile: "b7402".into(),
             switch: None,
             uinput: dev.join("uinput"),
-            physical_acceptance: "pending-rust-acceptance".into(),
+            physical_acceptance: "basic-expertbook-verified; fold-suspend-pending".into(),
         });
     }
     if matches.len() != 1 {
