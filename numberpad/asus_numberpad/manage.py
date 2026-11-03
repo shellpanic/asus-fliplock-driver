@@ -298,9 +298,37 @@ def session():
             while not stopping and child.poll() is None and session_active(session_id):
                 time.sleep(.5)
         finally:
-            subprocess.run(['sv', 'down', str(driver)], check=False)
-            subprocess.run(['sv', 'exit', str(driver)], check=False)
-            child.send_signal(signal.SIGHUP)
-            child.wait(timeout=5)
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
+            try:
+                # Stop runsvdir first so it cannot spawn a replacement runsv
+                # between an exit request and shutdown. HUP forwards TERM to
+                # the supervised runsv processes, then exits the parent.
+                if child.poll() is None:
+                    child.send_signal(signal.SIGHUP)
+                child.wait(timeout=5)
+                subprocess.run(['sv', 'down', str(driver)], check=False)
+                subprocess.run(['sv', 'exit', str(driver)], check=False)
+                wait_runit_exit(driver)
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
+
+
+def wait_runit_exit(driver):
+    # Parent exit alone does not establish that its runsv child has exited.
+    # Retain session_guard until the child's lifetime lock is released.
+    import fcntl
+    import time
+    deadline = time.monotonic() + 5
+    try:
+        lock = (driver / 'supervise/lock').open('a')
+    except FileNotFoundError:
+        return
+    with lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise ValueError('Runit child did not exit; stop it before restarting or disabling') from None
+                time.sleep(.05)

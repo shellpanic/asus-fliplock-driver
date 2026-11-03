@@ -193,6 +193,24 @@ class ProcessTests(unittest.TestCase):
         utility.write_text('#!/bin/sh\nwhile [ "$#" -gt 0 ]; do case "$1" in --*) shift;; *) break;; esac; done\nexec "$@"\n')
         utility.chmod(0o755)
         return utility
+    def test_wait_for_runit_child_lifetime_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            service = Path(temporary)
+            (service / 'supervise').mkdir()
+            program = ('import fcntl, sys, time; '
+                       'lock=open(sys.argv[1], "a"); '
+                       'fcntl.flock(lock, fcntl.LOCK_EX); '
+                       'print("locked", flush=True); time.sleep(.15)')
+            child = subprocess.Popen(['python3', '-c', program, str(service / 'supervise/lock')],
+                                     stdout=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(child.stdout.readline().strip(), 'locked')
+                manage.wait_runit_exit(service)
+                with (service / 'supervise/lock').open('a') as lock:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                child.wait(timeout=3)
+                child.stdout.close()
     def test_inhibitor_child_exits_when_pipe_closes(self):
         with tempfile.TemporaryDirectory() as temporary:
             utility = self.utility(Path(temporary))

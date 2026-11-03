@@ -14,6 +14,7 @@ from .hardware import illuminate
 from .keymap import session_map, resolve
 from .inhibit import DelayInhibitor
 from .sleep import SleepSignals
+from .session import display_kind
 
 
 def session_active(session):
@@ -21,6 +22,10 @@ def session_active(session):
                                      '-p', 'Active', '-p', 'LockedHint', '-p', 'Type',
                                      '-p', 'User', '-p', 'Remote'], timeout=.5).decode().splitlines()
     values = dict(item.split('=', 1) for item in values if '=' in item)
+    try:
+        display_kind()
+    except ValueError:
+        return False
     return (values.get('Active') == 'yes' and values.get('LockedHint') == 'no'
             and values.get('Type') == os.environ.get('XDG_SESSION_TYPE')
             and values.get('User') == str(os.getuid()) and values.get('Remote') == 'no')
@@ -85,6 +90,7 @@ def run(hold=1.0):
     pressed = []
     touch = switch = output = signals = engine = inhibitor = None
     grabbed = False
+    reset_started = False
     stopping = False
     old_handlers = {}
     def stop(*_):
@@ -104,10 +110,13 @@ def run(hold=1.0):
                 pressed.append(code)
         output.syn()
     try:
-        # Reset interrupted illumination before opening/grabbing any input.
-        illuminate(device['adapter'], False)
+        # Authenticate to the real display and resolve its map before any I2C
+        # write or input open, including startx logins classified as tty.
         mapping_source = session_map()
         mapping = resolve(mapping_source)
+        # Reset interrupted illumination before opening/grabbing any input.
+        reset_started = True
+        illuminate(device['adapter'], False)
         touch = InputDevice(device['event'])
         switch = InputDevice(device['switch']['event'])
         slots = Slots(touch, c)
@@ -181,7 +190,7 @@ def run(hold=1.0):
         try:
             if engine:
                 engine.off()
-            else:
+            elif reset_started:
                 illuminate(device['adapter'], False)
         finally:
             for opened in (output, switch, touch):

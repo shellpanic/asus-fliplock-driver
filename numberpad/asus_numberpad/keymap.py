@@ -5,18 +5,15 @@ keyboard layout. Multiple layout groups are refused until group tracking exists.
 No physical keyboard device is opened. APIs from libxkbcommon, MIT licensed.
 """
 import ctypes as C
-import os
 import subprocess
+
+from .session import display_kind
 
 SYMBOLS = '0123456789/*-%.+='
 
 
 def session_map():
-    kind = os.environ.get('XDG_SESSION_TYPE')
-    if kind not in ('x11', 'wayland'):
-        raise ValueError('Run in a graphical X11 or Wayland session')
-    if not os.environ.get('DISPLAY' if kind == 'x11' else 'WAYLAND_DISPLAY'):
-        raise ValueError('Current session display environment is missing')
+    kind = display_kind()
     option = '--format=v1' if kind == 'x11' else '--raw'
     return subprocess.check_output(['xkbcli', 'dump-keymap-' + kind, option], timeout=.5)
 

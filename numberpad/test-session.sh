@@ -36,15 +36,32 @@ while True: time.sleep(.1)
 PY
 chmod 755 /usr/bin/asus-numberpad
 cat > /tmp/numberpadqa-session.py <<'PY'
+import subprocess
+import sys
 import time
 from pathlib import Path
-from asus_numberpad import manage, runtime
+from asus_numberpad import manage
 from unittest.mock import patch
+program = ('from asus_numberpad import manage, runtime; '
+           'runtime.session_active = lambda _: True; manage.session()')
+events_path = Path('/tmp/numberpadqa-runtime/events')
 for repeat in range(2):
-    deadline = time.monotonic() + 4
-    runtime.session_active = lambda _: time.monotonic() < deadline
-    manage.session()
-    time.sleep(.5)
+    parent = subprocess.Popen([sys.executable, '-c', program])
+    try:
+        deadline = time.monotonic() + 15
+        while True:
+            events = events_path.read_text().splitlines() if events_path.exists() else []
+            if events.count('start') == repeat + 1:
+                break
+            if parent.poll() is not None or time.monotonic() >= deadline:
+                raise AssertionError('Fixture driver failed to start')
+            time.sleep(.05)
+    finally:
+        parent.terminate()
+        parent.wait(timeout=10)
+    assert parent.returncode == 0, parent.returncode
+    # Start the next session immediately: the previous session must not return
+    # until its runsv child is gone. No timing sleep hides a teardown race.
 with patch.object(manage, 'recover') as recover:
     manage.stop_session()
     recover.assert_called_once_with(missing_ok=True)

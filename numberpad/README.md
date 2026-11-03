@@ -8,7 +8,10 @@ layout groups and missing session dependencies are refused. Do not infer support
 for another ExpertBook from a similar product name.
 
 The selected user runs the driver in an active unlocked local logind/elogind
-X11 or Wayland session. It starts off. Hold the upper-right icon for one second
+X11 or Wayland session. A local startx display may retain `tty` in both
+`XDG_SESSION_TYPE` and elogind; it is accepted only with a local `DISPLAY` such
+as `:0`, no Wayland/SSH ambiguity, and an authenticated XKB connection before
+any input open or I2C write. No session environment variables are rewritten. It starts off. Hold the upper-right icon for one second
 to activate/deactivate; lift after toggling. While active it exclusively grabs
 only the selected touchpad. Touchscreen, external mouse and physical keyboards
 are never grabbed or opened. It releases generated keys, disables illumination

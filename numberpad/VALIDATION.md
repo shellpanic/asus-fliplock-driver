@@ -57,3 +57,32 @@ usage. This personal fork cannot directly use the organization's runner pool.
 External-fork PRs are excluded from the Umatix self-hosted jobs. Fork changes
 must be independently reviewed, then validated through the reviewed Lazyvoid
 pin update; an unpinned fork PR does not automatically receive CI checks.
+
+
+## Console-started X11 compatibility (2026-11-03)
+
+The user-present preflight reported DISPLAY=:0 with XDG_SESSION_TYPE=tty and
+elogind Type=tty, Active=yes, LockedHint=no, Remote=no. This is not yet physical
+NumberPad acceptance. The adapter now selects X11 for that narrow local-display
+case without rewriting session variables. It rejects SSH/Wayland ambiguity,
+nonlocal X display syntax, mismatched login type, inactive/locked/remote logins
+and another session owner. Native X11/Wayland paths retain matching type checks.
+
+The runtime authenticates to the actual X server and resolves the keymap before
+any input open or I2C write, including cleanup when the display cannot be reached.
+Five regression tests cover selection, login gating, rejected contexts, native
+protocols and display failure without hardware writes. Local suite after the teardown follow-up: 32 pass,
+one private-bus prerequisite skip. The disposable Void fixture additionally
+starts an authenticated Xvfb server as a regular user and verifies tty/X11 keymap
+retrieval plus refusal without the X cookie. Runner evidence is recorded in the
+PR; all physical keypad and compositor-input acceptance remains pending.
+
+
+The real Void supervisor fixture exposed a teardown/startup race under load:
+parent runsvdir exit did not prove its runsv child had released its lock. Stop
+the parent before child exit requests to prevent respawn, and hold the session
+coordination guard until the child lifetime lock is released (bounded wait,
+explicit failure on timeout). The fixture now waits for observed startup then
+terminates/restarts immediately, without a sleep hiding the race. A separate
+process-lock regression checks the child-lifetime wait. This adds no hardware
+acceptance claim.
