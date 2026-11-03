@@ -71,8 +71,18 @@ and another session owner. Native X11/Wayland paths retain matching type checks.
 The runtime authenticates to the actual X server and resolves the keymap before
 any input open or I2C write, including cleanup when the display cannot be reached.
 Five regression tests cover selection, login gating, rejected contexts, native
-protocols and display failure without hardware writes. Local suite: 31 pass,
+protocols and display failure without hardware writes. Local suite after the teardown follow-up: 32 pass,
 one private-bus prerequisite skip. The disposable Void fixture additionally
 starts an authenticated Xvfb server as a regular user and verifies tty/X11 keymap
 retrieval plus refusal without the X cookie. Runner evidence is recorded in the
 PR; all physical keypad and compositor-input acceptance remains pending.
+
+
+The real Void supervisor fixture exposed a teardown/startup race under load:
+parent runsvdir exit did not prove its runsv child had released its lock. Stop
+the parent before child exit requests to prevent respawn, and hold the session
+coordination guard until the child lifetime lock is released (bounded wait,
+explicit failure on timeout). The fixture now waits for observed startup then
+terminates/restarts immediately, without a sleep hiding the race. A separate
+process-lock regression checks the child-lifetime wait. This adds no hardware
+acceptance claim.
