@@ -21,7 +21,7 @@ top-level legacy install/uninstall entrypoints are retired; historical versions
 remain in Git. No vendored installer, telemetry or package upgrade code is executed/installed.
 
 The maintained fork version is independent of the imported upstream versions.
-3.0.0 is a release target, not a claim of hardware acceptance. See README.
+1.0.0 is the first stable Rust series; tested scope and pending physical acceptance are recorded in README.
 
 Rust dependency versions and declared licenses are recorded in Cargo.lock and
 dependencies.json. Native package staging includes the dependency license files.

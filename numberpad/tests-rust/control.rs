@@ -14,6 +14,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+// This is a functional process-protocol test, not a cold-exec benchmark.
+// Overlayfs fsync / concurrent image exports can delay fixture startup on CI;
+// allow 15s here without changing production readiness/stop deadlines.
 struct Process(Child);
 impl Drop for Process {
     fn drop(&mut self) {
@@ -49,13 +52,18 @@ fn name(role: &str) -> &str {
 }
 fn wait(root: &Path, role: &str, child: &mut Process) -> serde_json::Value {
     let path = root.join(format!("{}.json", name(role)));
-    let until = Instant::now() + Duration::from_secs(3);
+    let until = Instant::now() + Duration::from_secs(15);
     while !path.exists() {
         assert!(
             child.0.try_wait().unwrap().is_none(),
             "fixture exited before ready"
         );
-        assert!(Instant::now() < until, "fixture did not start");
+        assert!(
+            Instant::now() < until,
+            "fixture did not start: pid={}, wait={:?}",
+            child.0.id(),
+            fs::read_to_string(format!("/proc/{}/wchan", child.0.id()))
+        );
         thread::sleep(Duration::from_millis(10));
     }
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
@@ -199,4 +207,46 @@ fn failed_session_teardown_with_surviving_child_blocks_cleanup() {
     assert!(child.0.wait().unwrap().success());
     assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
     assert!(!stop(root.path(), "session").success());
+}
+
+#[test]
+fn killed_runtime_releases_lifetime_lock_and_authenticated_restart_replaces_stale_state() {
+    let root = root();
+    let mut first = spawn(root.path(), "runtime", &[]);
+    let previous = wait(root.path(), "runtime", &mut first);
+    first.0.kill().unwrap();
+    first.0.wait().unwrap();
+    // SIGKILL cannot run destructors; stale metadata/socket are intentional.
+    assert!(root.path().join("asus-numberpad.json").exists());
+    assert!(stop(root.path(), "runtime").success());
+    let mut next = spawn(root.path(), "runtime", &[]);
+    let current =
+        wait_ready_replacement(root.path(), &mut next, previous["token"].as_str().unwrap());
+    assert_ne!(previous["token"], current["token"]);
+    assert_ne!(previous["pid"], current["pid"]);
+    assert!(stop(root.path(), "runtime").success());
+    assert!(next.0.wait().unwrap().success());
+    assert!(!root.path().join("asus-numberpad.json").exists());
+}
+fn wait_ready_replacement(
+    root: &Path,
+    process: &mut Process,
+    old_token: &str,
+) -> serde_json::Value {
+    let until = Instant::now() + Duration::from_secs(15);
+    loop {
+        assert!(process.0.try_wait().unwrap().is_none());
+        if let Ok(data) = fs::read(root.join("asus-numberpad.json"))
+            && let Ok(value) = serde_json::from_slice::<serde_json::Value>(&data)
+            && value["token"].as_str() != Some(old_token)
+            && value["ready"] == true
+        {
+            return value;
+        }
+        assert!(
+            Instant::now() < until,
+            "runtime replacement was not ready within the fixture startup budget"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 }

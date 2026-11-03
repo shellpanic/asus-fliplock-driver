@@ -69,58 +69,162 @@ impl Slots {
             .collect()
     }
 }
-struct Hardware {
+// Decode real evdev frames independently of Linux file descriptors. The same
+// state machine is exercised by synthetic fold, dropped-frame and fault tests.
+struct EventState {
+    slots: Slots,
+    engine: Engine,
+    tablet: bool,
+    touch_dropped: bool,
+    switch_dropped: bool,
+}
+enum TouchUpdate {
+    Actions(Vec<Action>),
+    Resync,
+}
+impl EventState {
+    fn switch(
+        &mut self,
+        event: libc::input_event,
+        current: impl FnOnce() -> Result<bool>,
+    ) -> Result<Vec<Action>> {
+        if event.type_ == 0 && event.code == 3 {
+            self.switch_dropped = true;
+            self.tablet = true;
+            return Ok(self.engine.reset());
+        }
+        if event.type_ == 5 && event.code == 1 && !self.switch_dropped {
+            self.tablet = event.value != 0;
+            if self.tablet {
+                return Ok(self.engine.reset());
+            }
+        } else if event.type_ == 0 && event.code == 0 {
+            self.tablet = current()?;
+            self.switch_dropped = false;
+            if self.tablet {
+                return Ok(self.engine.reset());
+            }
+        }
+        Ok(vec![])
+    }
+    fn touch(&mut self, event: libc::input_event, now: f64) -> Result<TouchUpdate> {
+        if event.type_ == 0 && event.code == 3 {
+            self.touch_dropped = true;
+            return Ok(TouchUpdate::Actions(self.engine.reset()));
+        }
+        if event.type_ == 0 && event.code == 0 {
+            if self.touch_dropped {
+                return Ok(TouchUpdate::Resync);
+            }
+            return Ok(TouchUpdate::Actions(self.frame(now)));
+        }
+        if event.type_ == 3 && !self.touch_dropped {
+            self.slots.event(event.code, event.value)?;
+        }
+        Ok(TouchUpdate::Actions(vec![]))
+    }
+    fn frame(&mut self, now: f64) -> Vec<Action> {
+        if self.touch_dropped {
+            return vec![];
+        }
+        self.engine.frame(
+            &self.slots.contacts(),
+            now,
+            !self.tablet && !self.switch_dropped,
+        )
+    }
+    fn resynced(&mut self) {
+        self.touch_dropped = false;
+        self.engine.blocked = true;
+    }
+}
+fn drain_events(mut read: impl FnMut() -> Result<Vec<libc::input_event>>) -> Result<()> {
+    for _ in 0..64 {
+        if read()?.is_empty() {
+            return Ok(());
+        }
+    }
+    bail!("Input stream did not quiesce during dropped-event recovery")
+}
+// The guard is shared with fault-injection tests: destructive cleanup closes
+// input/uinput before I2C, so even a failed ungrab cannot retain pointer control.
+trait ActionSink {
+    fn action(&mut self, action: Action, mapping: &keymap::Mapping) -> Result<()>;
+    fn close_input(&mut self);
+}
+struct NativeHardware {
     touch: Option<Input>,
     switch: Option<Input>,
     output: Option<Output>,
     light: linux::Light,
-    reset_started: bool,
 }
-impl Hardware {
-    fn actions(&mut self, actions: Vec<Action>, mapping: &keymap::Mapping) -> Result<()> {
-        let mut first = None;
-        for action in actions {
-            let result = match action {
-                Action::Key(key) => {
-                    if let Some(output) = &mut self.output {
-                        output.send(key.and_then(|k| mapping.get(k)))
-                    } else {
-                        Ok(())
-                    }
-                }
-                Action::Grab(on) => {
-                    if let Some(touch) = &mut self.touch {
-                        touch.grab(on)
-                    } else {
-                        Ok(())
-                    }
-                }
-                Action::Light(on) => self.light.set(on),
-            };
-            if let Err(error) = result
-                && first.is_none()
-            {
-                first = Some(error);
-            }
+impl ActionSink for NativeHardware {
+    fn action(&mut self, action: Action, mapping: &keymap::Mapping) -> Result<()> {
+        match action {
+            Action::Key(key) => match &mut self.output {
+                Some(output) => output.send(key.and_then(|k| mapping.get(k))),
+                None => Ok(()),
+            },
+            Action::Grab(on) => match &mut self.touch {
+                Some(touch) => touch.grab(on),
+                None => Ok(()),
+            },
+            Action::Light(on) => self.light.set(on),
         }
-        if let Some(error) = first {
-            return Err(error);
-        }
-        Ok(())
+    }
+    fn close_input(&mut self) {
+        self.output.take();
+        self.touch.take();
+        self.switch.take();
     }
 }
-impl Drop for Hardware {
+struct Hardware<T: ActionSink>(T);
+impl<T: ActionSink> std::ops::Deref for Hardware<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+impl<T: ActionSink> std::ops::DerefMut for Hardware<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+impl<T: ActionSink> Hardware<T> {
+    fn actions(&mut self, actions: Vec<Action>, mapping: &keymap::Mapping) -> Result<()> {
+        let cleanup = actions.iter().all(|action| {
+            matches!(
+                action,
+                Action::Key(None) | Action::Grab(false) | Action::Light(false)
+            )
+        });
+        let mut first = None;
+        for action in actions {
+            // On a release error, the guard first closes kernel input handles
+            // before it retries light-off. Activation must never pass a failed grab.
+            if matches!(action, Action::Light(false)) && first.is_some() {
+                break;
+            }
+            if let Err(error) = self.0.action(action, mapping) {
+                if !cleanup {
+                    return Err(error);
+                }
+                if first.is_none() {
+                    first = Some(error);
+                }
+            }
+        }
+        match first {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+}
+impl<T: ActionSink> Drop for Hardware<T> {
     fn drop(&mut self) {
-        if let Some(output) = &mut self.output {
-            let _ = output.send(None);
-        }
-        if self.reset_started
-            && let Err(error) = self.light.set(false)
-        {
+        self.0.close_input();
+        if let Err(error) = self.0.action(Action::Light(false), &keymap::Mapping::new()) {
             eprintln!("Illumination cleanup failed: {error}");
-        }
-        if let Some(touch) = &mut self.touch {
-            let _ = touch.grab(false);
         }
     }
 }
@@ -148,14 +252,13 @@ pub fn run(settings: Settings) -> Result<()> {
     if monitor.sleeping()? || owner.stopped() {
         return Ok(());
     }
-    let mut hardware = Hardware {
+    let mut hardware = Hardware(NativeHardware {
         touch: None,
         switch: None,
         output: None,
         light: linux::Light::open(&device)?,
-        reset_started: true,
-    };
-    hardware.light.set(false)?;
+    });
+    hardware.actions(vec![Action::Light(false)], &mapping)?;
     hardware.touch = Some(Input::open(&device.event, &device.sysfs, true)?);
     let switch = device
         .switch
@@ -163,15 +266,19 @@ pub fn run(settings: Settings) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Missing isolated tablet switch"))?;
     hardware.switch = Some(Input::open(&switch.event, &switch.sysfs, false)?);
     let touch = hardware.touch.as_ref().unwrap();
-    let mut slots = Slots::new(touch)?;
+    let slots = Slots::new(touch)?;
     let x = touch.abs(53)?;
     let y = touch.abs(54)?;
     let mut engine = Engine::new((x.minimum, x.maximum, y.minimum, y.maximum), settings)?;
     engine.blocked = !slots.contacts().is_empty();
     hardware.output = Some(Output::new(&device.uinput, &mapping)?);
-    let mut tablet = hardware.switch.as_ref().unwrap().tablet()?;
-    let mut dropped = false;
-    let mut switch_dropped = false;
+    let mut state = EventState {
+        slots,
+        engine,
+        tablet: hardware.switch.as_ref().unwrap().tablet()?,
+        touch_dropped: false,
+        switch_dropped: false,
+    };
     let start = Instant::now();
     let mut check = Instant::now();
     owner.ready()?;
@@ -200,7 +307,10 @@ pub fn run(settings: Settings) -> Result<()> {
             }
             return Err(error.into());
         }
-        for (index, fd) in fds.iter().enumerate() {
+        // A queued fold/drop must take effect before any touch frame from the
+        // same poll; touch input may never win this safety decision.
+        for index in [1, 0] {
+            let fd = &fds[index];
             if fd.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
                 bail!("Selected input device disconnected");
             }
@@ -213,42 +323,21 @@ pub fn run(settings: Settings) -> Result<()> {
                 hardware.switch.as_ref().unwrap().events()?
             };
             for event in events {
-                if event.type_ == 0 && event.code == 3 {
-                    hardware.actions(engine.reset(), &mapping)?;
-                    if index == 0 {
-                        dropped = true;
-                    } else {
-                        switch_dropped = true;
-                        tablet = true;
-                    }
-                    continue;
-                }
                 if index == 1 {
-                    if event.type_ == 5 && event.code == 1 && !switch_dropped {
-                        tablet = event.value != 0;
-                        if tablet {
-                            hardware.actions(engine.reset(), &mapping)?;
+                    let actions =
+                        state.switch(event, || hardware.switch.as_ref().unwrap().tablet())?;
+                    hardware.actions(actions, &mapping)?;
+                } else {
+                    match state.touch(event, start.elapsed().as_secs_f64())? {
+                        TouchUpdate::Actions(actions) => hardware.actions(actions, &mapping)?,
+                        TouchUpdate::Resync => {
+                            let touch = hardware.touch.as_ref().unwrap();
+                            drain_events(|| touch.events())?;
+                            state.slots.resync(touch)?;
+                            state.resynced();
+                            break;
                         }
-                    } else if event.type_ == 0 && event.code == 0 {
-                        tablet = hardware.switch.as_ref().unwrap().tablet()?;
-                        switch_dropped = false;
                     }
-                    continue;
-                }
-                if event.type_ == 0 && event.code == 0 {
-                    if dropped {
-                        while !hardware.touch.as_ref().unwrap().events()?.is_empty() {}
-                        slots.resync(hardware.touch.as_ref().unwrap())?;
-                        dropped = false;
-                        engine.blocked = true;
-                        break;
-                    }
-                    hardware.actions(
-                        engine.frame(&slots.contacts(), start.elapsed().as_secs_f64(), !tablet),
-                        &mapping,
-                    )?;
-                } else if event.type_ == 3 && !dropped {
-                    slots.event(event.code, event.value)?;
                 }
             }
         }
@@ -264,12 +353,7 @@ pub fn run(settings: Settings) -> Result<()> {
             }
             check = Instant::now();
         }
-        if !dropped {
-            hardware.actions(
-                engine.frame(&slots.contacts(), start.elapsed().as_secs_f64(), !tablet),
-                &mapping,
-            )?;
-        }
+        hardware.actions(state.frame(start.elapsed().as_secs_f64()), &mapping)?;
     }
     owner.stopping.store(true, Ordering::SeqCst);
     Ok(())
@@ -297,3 +381,7 @@ pub fn recover_locked(missing_ok: bool) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "runtime_tests.rs"]
+mod tests;

@@ -83,7 +83,7 @@ impl Engine {
         self.contact = None;
         self.pending = None;
         self.down = None;
-        vec![Action::Key(None), Action::Light(false), Action::Grab(false)]
+        vec![Action::Key(None), Action::Grab(false), Action::Light(false)]
     }
     pub fn reset(&mut self) -> Vec<Action> {
         let actions = self.off();

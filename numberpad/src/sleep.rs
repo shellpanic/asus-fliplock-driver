@@ -13,7 +13,7 @@ pub struct Monitor {
     connection: Connection,
     events: Receiver<Result<bool, String>>,
     _inhibitor: Option<File>,
-    thread: Option<std::thread::JoinHandle<()>>,
+    threads: Vec<std::thread::JoinHandle<()>>,
 }
 impl Monitor {
     pub fn new() -> Result<Self> {
@@ -21,14 +21,24 @@ impl Monitor {
     }
     fn connect(builder: zbus::blocking::connection::Builder<'_>) -> Result<Self> {
         let connection = builder.method_timeout(Duration::from_secs(2)).build()?;
-        let proxy = Proxy::new(
+        let name_proxy = Proxy::new(
             &connection,
             "org.freedesktop.login1",
             "/org/freedesktop/login1",
             "org.freedesktop.login1.Manager",
         )?;
+        // Subscribe before resolving the owner, then bind all methods/signals to
+        // that unique connection. A restarted manager needs a NEW inhibitor.
+        let mut owners = name_proxy.receive_owner_changed()?;
+        let owner = manager_owner(&connection)?;
+        let proxy = Proxy::new(
+            &connection,
+            owner.clone(),
+            "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager",
+        )?;
         let iter = proxy.receive_signal("PrepareForSleep")?;
-        if preparing(&connection)? {
+        if preparing(&connection, &owner)? {
             bail!("System is preparing for sleep; startup refused");
         }
         let descriptor: OwnedFd = proxy.call(
@@ -41,10 +51,20 @@ impl Monitor {
             ),
         )?;
         let inhibitor = File::from(std::os::fd::OwnedFd::from(descriptor));
-        if preparing(&connection)? {
+        if preparing(&connection, &owner)? {
             bail!("Sleep began while acquiring inhibitor; startup refused");
         }
+        if manager_owner(&connection)? != owner {
+            bail!("Login manager changed during inhibitor setup");
+        }
         let (tx, events) = mpsc::channel();
+        let owner_tx = tx.clone();
+        let owner_thread = thread::spawn(move || {
+            let _ = owners.next();
+            let _ = owner_tx.send(Err(
+                "Login manager owner changed; inhibitor no longer protects cleanup".into(),
+            ));
+        });
         let thread = thread::spawn(move || {
             for message in iter {
                 let value = message
@@ -56,12 +76,13 @@ impl Monitor {
                     return;
                 }
             }
+            let _ = tx.send(Err("Sleep signal subscription closed".into()));
         });
         Ok(Self {
             connection,
             events,
             _inhibitor: Some(inhibitor),
-            thread: Some(thread),
+            threads: vec![thread, owner_thread],
         })
     }
     pub fn sleeping(&self) -> Result<bool> {
@@ -80,10 +101,19 @@ impl Monitor {
     }
 }
 
-fn preparing(connection: &Connection) -> Result<bool> {
+fn manager_owner(connection: &Connection) -> Result<String> {
+    let bus = Proxy::new(
+        connection,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+    )?;
+    Ok(bus.call("GetNameOwner", &("org.freedesktop.login1",))?)
+}
+fn preparing(connection: &Connection, owner: &str) -> Result<bool> {
     let properties = Proxy::new(
         connection,
-        "org.freedesktop.login1",
+        owner,
         "/org/freedesktop/login1",
         "org.freedesktop.DBus.Properties",
     )?;
@@ -98,7 +128,7 @@ impl Drop for Monitor {
     fn drop(&mut self) {
         self._inhibitor.take();
         let _ = futures_lite::future::block_on(self.connection.inner().clone().close());
-        if let Some(thread) = self.thread.take() {
+        for thread in self.threads.drain(..) {
             let _ = thread.join();
         }
     }
@@ -117,22 +147,30 @@ mod tests {
     struct Login {
         descriptor: Mutex<Option<std::os::fd::OwnedFd>>,
         transition: bool,
+        lose_owner: bool,
         preparing: std::sync::atomic::AtomicBool,
     }
     #[zbus::interface(name = "org.freedesktop.login1.Manager")]
     impl Login {
-        fn inhibit(
+        async fn inhibit(
             &self,
             _what: &str,
             _who: &str,
             _why: &str,
             _mode: &str,
+            #[zbus(connection)] connection: &zbus::Connection,
         ) -> zbus::fdo::Result<OwnedFd> {
             assert_eq!(_what, "sleep");
             assert_eq!(_mode, "delay");
             if self.transition {
                 self.preparing
                     .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            if self.lose_owner {
+                connection
+                    .release_name("org.freedesktop.login1")
+                    .await
+                    .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
             }
             self.descriptor
                 .lock()
@@ -178,6 +216,7 @@ mod tests {
                     Login {
                         descriptor: Mutex::new(Some(read_end.into())),
                         transition: false,
+                        lose_owner: false,
                         preparing: std::sync::atomic::AtomicBool::new(false),
                     },
                 )
@@ -274,6 +313,7 @@ mod tests {
                     Login {
                         descriptor: Mutex::new(Some(read_end.into())),
                         transition: true,
+                        lose_owner: false,
                         preparing: std::sync::atomic::AtomicBool::new(false),
                     },
                 )
@@ -292,5 +332,178 @@ mod tests {
         let _ = daemon.kill();
         let _ = daemon.wait();
         assert!(result.is_ok());
+    }
+    struct PrivateBus {
+        _root: tempfile::TempDir,
+        daemon: std::process::Child,
+        address: String,
+    }
+    impl PrivateBus {
+        fn new() -> Self {
+            let root = tempfile::tempdir().unwrap();
+            let config = root.path().join("bus.conf");
+            std::fs::write(&config, r#"<busconfig><type>system</type><listen>unix:tmpdir=/tmp</listen><auth>EXTERNAL</auth><policy context="default"><allow user="*"/><allow own="*"/><allow send_destination="*"/><allow receive_sender="*"/><deny send_interface="org.freedesktop.DBus.Monitoring"/></policy></busconfig>"#).unwrap();
+            let mut daemon = Command::new("dbus-daemon")
+                .args(["--nofork", "--print-address"])
+                .arg(format!("--config-file={}", config.display()))
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let mut address = String::new();
+            BufReader::new(daemon.stdout.take().unwrap())
+                .read_line(&mut address)
+                .unwrap();
+            assert!(!address.trim().is_empty());
+            Self {
+                _root: root,
+                daemon,
+                address: address.trim().into(),
+            }
+        }
+        fn builder(&self) -> zbus::blocking::connection::Builder<'_> {
+            zbus::blocking::connection::Builder::address(self.address.as_str())
+                .unwrap()
+                .method_timeout(Duration::from_secs(2))
+        }
+        fn login(&self, fd: std::os::fd::OwnedFd, lose_owner: bool) -> Connection {
+            self.builder()
+                .name("org.freedesktop.login1")
+                .unwrap()
+                .serve_at(
+                    "/org/freedesktop/login1",
+                    Login {
+                        descriptor: Mutex::new(Some(fd)),
+                        transition: false,
+                        lose_owner,
+                        preparing: std::sync::atomic::AtomicBool::new(false),
+                    },
+                )
+                .unwrap()
+                .build()
+                .unwrap()
+        }
+    }
+    impl Drop for PrivateBus {
+        fn drop(&mut self) {
+            let _ = self.daemon.kill();
+            let _ = self.daemon.wait();
+        }
+    }
+    #[test]
+    fn login_manager_loss_or_replacement_invalidates_inhibitor_on_live_bus() {
+        for replacement in [false, true] {
+            let bus = PrivateBus::new();
+            let (fd, mut peer) = UnixStream::pair().unwrap();
+            peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            let service = bus.login(fd.into(), false);
+            let monitor = Monitor::connect(bus.builder()).unwrap();
+            assert!(!monitor.sleeping().unwrap());
+            service.release_name("org.freedesktop.login1").unwrap();
+            let _new_owner = if replacement {
+                Some(
+                    bus.builder()
+                        .name("org.freedesktop.login1")
+                        .unwrap()
+                        .build()
+                        .unwrap(),
+                )
+            } else {
+                None
+            };
+            assert!(!monitor.connection.is_closed(), "test must keep bus alive");
+            let until = Instant::now() + Duration::from_secs(2);
+            loop {
+                if monitor.sleeping().is_err() {
+                    break;
+                }
+                assert!(Instant::now() < until, "owner loss did not stop runtime");
+                thread::sleep(Duration::from_millis(10));
+            }
+            drop(monitor);
+            assert_eq!(peer.read(&mut [0]).unwrap(), 0, "stale inhibitor FD leaked");
+        }
+    }
+    #[test]
+    fn owner_loss_during_inhibit_refuses_startup_and_releases_fd() {
+        let bus = PrivateBus::new();
+        let (fd, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let _service = bus.login(fd.into(), true);
+        assert!(Monitor::connect(bus.builder()).is_err());
+        assert_eq!(
+            peer.read(&mut [0]).unwrap(),
+            0,
+            "startup leaked inhibitor FD"
+        );
+    }
+    #[test]
+    fn bus_disconnect_is_detected_without_waiting_for_sleep_signal() {
+        let mut bus = PrivateBus::new();
+        let (fd, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let _service = bus.login(fd.into(), false);
+        let monitor = Monitor::connect(bus.builder()).unwrap();
+        bus.daemon.kill().unwrap();
+        bus.daemon.wait().unwrap();
+        let until = Instant::now() + Duration::from_secs(2);
+        while monitor.sleeping().is_ok() {
+            assert!(Instant::now() < until, "bus disconnect was not detected");
+            thread::sleep(Duration::from_millis(10));
+        }
+        drop(monitor);
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+    }
+    #[test]
+    fn repeated_sleep_resume_cycles_reacquire_and_release_inhibitors() {
+        let bus = PrivateBus::new();
+        let (fd, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let service = bus.login(fd.into(), false);
+        for cycle in 0..2 {
+            let monitor = Monitor::connect(bus.builder()).unwrap();
+            assert!(!monitor.sleeping().unwrap());
+            service
+                .emit_signal(
+                    None::<&str>,
+                    "/org/freedesktop/login1",
+                    "org.freedesktop.login1.Manager",
+                    "PrepareForSleep",
+                    &(true,),
+                )
+                .unwrap();
+            let until = Instant::now() + Duration::from_secs(2);
+            while !monitor.sleeping().unwrap() {
+                assert!(Instant::now() < until);
+                thread::sleep(Duration::from_millis(10));
+            }
+            drop(monitor);
+            assert_eq!(
+                peer.read(&mut [0]).unwrap(),
+                0,
+                "cycle{cycle}: inhibitor FD leaked"
+            );
+            if cycle == 0 {
+                let (fd, next_peer) = UnixStream::pair().unwrap();
+                next_peer
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let interface = service
+                    .object_server()
+                    .interface::<_, Login>("/org/freedesktop/login1")
+                    .unwrap();
+                *interface.get().descriptor.lock().unwrap() = Some(fd.into());
+                peer = next_peer;
+                service
+                    .emit_signal(
+                        None::<&str>,
+                        "/org/freedesktop/login1",
+                        "org.freedesktop.login1.Manager",
+                        "PrepareForSleep",
+                        &(false,),
+                    )
+                    .unwrap();
+            }
+        }
     }
 }

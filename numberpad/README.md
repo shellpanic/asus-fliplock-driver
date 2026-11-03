@@ -1,4 +1,4 @@
-# ASUS NumberPad (Rust 3.0.0 candidate)
+# ASUS NumberPad 1.0.0 (Rust)
 
 Optional GPL-2.0 native session driver for exactly ASUS EXPERTBOOK
 B5402FVA_B5402FVA, touchpad 04F3:3230, b7402 layout and an isolated tablet switch.
@@ -6,10 +6,19 @@ Unknown/ambiguous hardware and multiple XKB groups are refused. The maintained
 runtime and setup are Rust. The upstream Python snapshot is retained only for
 attribution and protocol/layout reference; it is never installed or executed.
 
-The Rust candidate has no physical acceptance yet. The preceding Python build
-was observed on this ExpertBook to illuminate, enter digits/operators, suppress
-pointer input while active, and restore pointer/tapping when off. That evidence
-does not establish Rust, fold/suspend, all keys or Wayland acceptance.
+The user tested the preceding Rust candidate on this exact ExpertBook under local
+X11/Void/elogind: installation with automatic setup/startup, digits 0–9, the
+printed / * - + % . = symbols, Enter and double-tap activation worked. One-action
+removal was read back to confirm package/enrollment/startup/process absence and
+retained settings; normal pointer movement/tapping worked after removal. These
+observations do not establish physical fold/suspend, crash, all key cells,
+modifier combinations, other desktops or other hardware acceptance.
+
+1.0.0 names the first stable Rust series. The earlier 3.0.0_1 package was an
+experimental migration candidate; the consuming XBPS package explicitly reverts
+that version so a normal update can adopt this series without force flags.
+Python 2.x installations must be disabled/removed with their old version before
+installing this Rust series; they are not silently adopted.
 
 ## User flow
 
@@ -43,7 +52,7 @@ Double-tap the upper-right icon to toggle, lifting between taps (each <=250ms,
 gap <=400ms). Movement/multiple contacts cancel it. Hold remains selectable.
 Double-tap while off passes ordinary taps to the desktop, so use the icon over
 a harmless desktop area during acceptance. While on only the chosen touchpad
-is grabbed. All generated keys are released and illumination/grab reset on
+is grabbed. Cleanup releases generated keys and pointer control before resetting illumination on
 stop, errors, tablet mode, sleep and session loss; resume starts off. Physical
 keyboard, external mouse and touchscreen are not opened. No tapping setting is
 rewritten. Mutable physical modifiers and every printed symbol need live testing.
@@ -53,7 +62,9 @@ I2C adapter (every address), and uinput (arbitrary input injection), without
 physical keyboard or input-group grants. Discovery resolves current event/bus
 identities each time. Only exact owned enrollment/startup files can be changed;
 modified or foreign files cause refusal. An incomplete teardown blocks removal
-rather than abandoning a surviving supervisor. Failed setup leaves the package
+rather than abandoning a surviving supervisor. If the session supervisor itself
+is forcibly killed, reboot to clear its private
+runtime state; automatic removal refuses unverified surviving descendants. Failed setup leaves the package
 and owned state available for repeat Install or Remove; no rollback is promised.
 
 ## Dependencies and sessions
