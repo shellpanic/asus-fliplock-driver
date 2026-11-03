@@ -166,10 +166,19 @@ class StoppedSessionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             runtime = Path(temporary)
             (runtime / 'asus-numberpad-runit/driver/supervise').mkdir(parents=True)
+            real_stat = Path.stat
+            def stat(path, *args, **kwargs):
+                result = real_stat(path, *args, **kwargs)
+                if path == runtime:
+                    values = list(result)
+                    values[4] = 1001
+                    return os.stat_result(values)
+                return result
             with (runtime / 'asus-numberpad.lock').open('a') as held:
                 fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 with patch.dict(os.environ, XDG_RUNTIME_DIR=temporary), \
-                     patch.object(manage.os, 'getuid', return_value=runtime.stat().st_uid), \
+                     patch.object(manage.os, 'getuid', return_value=1001), \
+                     patch.object(Path, 'stat', stat), \
                      patch.object(manage.shutil, 'which', side_effect=lambda name: '/usr/bin/sv' if name == 'sv' else None), \
                      patch.object(manage.subprocess, 'run', return_value=SimpleNamespace(returncode=1)), \
                      patch.object(manage, 'probe') as probe:
