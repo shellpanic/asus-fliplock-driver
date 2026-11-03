@@ -16,9 +16,13 @@ Fork-specific adaptation: separate evdev session adapter, exact discovery,
 permission enrollment, explicit staged install, systemd/runit user supervision,
 numbers-only exclusive touchpad access, off-at-start and fail-closed recovery.
 The b7402 layout/padding, I2C packet protocol and physical-state recovery rules
-come from NumberPad upstream. Runtime code is maintained in asus_numberpad/;
+come from NumberPad upstream. Runtime and setup are now maintained as Rust in src/;
 top-level legacy install/uninstall entrypoints are retired; historical versions
 remain in Git. No vendored installer, telemetry or package upgrade code is executed/installed.
 
 The maintained fork version is independent of the imported upstream versions.
-2.0.0 is a release target, not a claim of hardware acceptance. See README.
+3.0.0 is a release target, not a claim of hardware acceptance. See README.
+
+Rust dependency versions and declared licenses are recorded in Cargo.lock and
+dependencies.json. Native package staging includes the dependency license files.
+The Rust binary is a separate GPL executable, not linked into Lazyvoid.

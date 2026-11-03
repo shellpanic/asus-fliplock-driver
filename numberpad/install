@@ -1,18 +1,26 @@
 #!/bin/sh
-# Staging only. Package installation must never enroll permissions or services.
+# Stage an already built native binary only; never enroll or start on install.
 set -eu
-if [ "$#" -ne 1 ] || [ -z "$1" ] || [ "$1" = / ]; then
-    echo 'Usage: numberpad/install ABSOLUTE_STAGING_ROOT (never /)' >&2
-    exit 1
+if [ "$#" -ne 1 ] || [ -z "$1" ]; then
+    echo 'Usage: numberpad/install ABSOLUTE_STAGING_ROOT' >&2; exit 1
 fi
 case $1 in /*) ;; *) exit 1;; esac
 mkdir -p -- "$1"
 root=$(CDPATH='' cd -- "$1" && pwd -P)
 [ "$root" != / ] || { echo 'Refuse canonical host root.' >&2; exit 1; }
-set -- "$root"
 base=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
-mkdir -p "$1/usr/bin" "$1/usr/lib/asus-numberpad/asus_numberpad" "$1/usr/share/licenses/asus-numberpad-driver" "$1/usr/share/doc/asus-numberpad-driver"
-install -m755 "$base/asus-numberpad" "$1/usr/bin/asus-numberpad"
-install -m644 "$base"/asus_numberpad/*.py "$1/usr/lib/asus-numberpad/asus_numberpad/"
-install -m644 "$base/../LICENSE.md" "$1/usr/share/licenses/asus-numberpad-driver/LICENSE"
-install -m644 "$base/ORIGINS.md" "$base/README.md" "$1/usr/share/doc/asus-numberpad-driver/"
+binary=${NUMBERPAD_BINARY:-$base/target/release/asus-numberpad}
+[ -x "$binary" ] || { echo 'Build the locked native Rust binary explicitly first.' >&2; exit 1; }
+info=$("$binary" build-info)
+case $info in *'"test_fixtures":false'*) ;; *)
+    if [ "${NUMBERPAD_DISPOSABLE_TEST:-}" != 1 ] || [ ! -f /.dockerenv ]; then
+        echo 'Never stage fixture-enabled binaries for real systems.' >&2; exit 1
+    fi;; esac
+mkdir -p "$root/usr/bin" "$root/usr/share/licenses/asus-numberpad-driver" "$root/usr/share/doc/asus-numberpad-driver"
+python3 "$base/dependency-inventory.py" --check --licenses "$root/usr/share/licenses/asus-numberpad-driver/dependencies"
+install -m644 "$base/dependencies.json" "$root/usr/share/licenses/asus-numberpad-driver/"
+install -m755 "$binary" "$root/usr/bin/asus-numberpad"
+install -m644 "$base/../LICENSE.md" "$root/usr/share/licenses/asus-numberpad-driver/LICENSE"
+install -m644 "$base/ORIGINS.md" "$base/README.md" "$base/Cargo.lock" "$root/usr/share/doc/asus-numberpad-driver/"
+# Refuse unsafe in-place migration staging; real package upgrades use XBPS.
+[ ! -e "$root/usr/lib/asus-numberpad" ] || { echo 'Old Python payload in staging root; use a fresh staging directory.' >&2; exit 1; }

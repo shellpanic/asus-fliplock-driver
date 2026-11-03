@@ -1,95 +1,98 @@
-# ASUS NumberPad component (2.0.0 candidate)
+# ASUS NumberPad (Rust 3.0.0 candidate)
 
-Optional session driver for the illuminated keypad inside an ASUS touchpad.
-The initial exact profile is **ASUS EXPERTBOOK B5402FVA_B5402FVA + 04F3:3230 →
-b7402**, from the imported upstream database. **Physical acceptance pending.**
-Unknown or ambiguous hardware, missing tablet-switch isolation, multiple XKB
-layout groups and missing session dependencies are refused. Do not infer support
-for another ExpertBook from a similar product name.
+Optional GPL-2.0 native session driver for exactly ASUS EXPERTBOOK
+B5402FVA_B5402FVA, touchpad 04F3:3230, b7402 layout and an isolated tablet switch.
+Unknown/ambiguous hardware and multiple XKB groups are refused. The maintained
+runtime and setup are Rust. The upstream Python snapshot is retained only for
+attribution and protocol/layout reference; it is never installed or executed.
 
-The selected user runs the driver in an active unlocked local logind/elogind
-X11 or Wayland session. A local startx display may retain `tty` in both
-`XDG_SESSION_TYPE` and elogind; it is accepted only with a local `DISPLAY` such
-as `:0`, no Wayland/SSH ambiguity, and an authenticated XKB connection before
-any input open or I2C write. No session environment variables are rewritten. It starts off. Hold the upper-right icon for one second
-to activate/deactivate; lift after toggling. While active it exclusively grabs
-only the selected touchpad. Touchscreen, external mouse and physical keyboards
-are never grabbed or opened. It releases generated keys, disables illumination
-and releases the grab on stop/error, tablet entry, session loss or suspend.
-Unfolding/resume does not activate it. No compositor tapping settings are edited.
+The Rust candidate has no physical acceptance yet. The preceding Python build
+was observed on this ExpertBook to illuminate, enter digits/operators, suppress
+pointer input while active, and restore pointer/tapping when off. That evidence
+does not establish Rust, fold/suspend, all keys or Wayland acceptance.
 
-## Dependencies and installation
+## User flow
 
-Distribution packages only: Python 3.10+, python-evdev, libxkbcommon (including
-xkbcli dump-keymap-x11 and dump-keymap-wayland tools, version >=1.8), udev, PyGObject/Gio,
-logind/elogind (loginctl and systemd-inhibit/elogind-inhibit), and either systemd
-user services or runit (runsvdir/sv). Void currently packages the Python binding
-as python3-evdev; libxkbcommon-tools supplies xkbcli. Debian with sufficiently recent xkbcommon tools uses
-python3-evdev, libxkbcommon-tools, dbus, libpam-systemd and systemd. Debian 12
-xkbcommon 1.5 lacks the required commands and is refused; staged installation
-and unit tests there do not prove runtime compatibility.
-
-`numberpad/install /absolute/staging/root` stages files for a native package.
-It refuses `/` and does not install dependencies, enroll permissions, start a
-service, modify a session or run either upstream installer. Legacy fliplock is
-not installed by this entrypoint. For removal, run `disable apply` as the enrolled
-user before removing the package. Package upgrades retain user configuration;
-there are no package lifecycle hooks or automatic service restarts.
-
-## Commands (as the intended regular user)
+Use Lazyvoid Install / enable ASUS NumberPad from the intended active local
+unlocked graphical account. Its review includes the package transaction and
+permission/module/startup scope; native sudo/doas handles privileged steps.
+Install loads uinput and i2c-dev, persists those module requests, enrolls exact
+selected devices and starts supervision immediately, with the keypad off.
+Remove stops authenticated owned processes, resets illumination before revoking
+permissions, removes owned startup/module configuration and removes the package.
+Settings and shared dependencies are retained. No module is unloaded.
 
 ```
-asus-numberpad probe --json
-asus-numberpad setup plan
-asus-numberpad setup apply
-asus-numberpad session
-asus-numberpad run
+asus-numberpad status
+asus-numberpad install plan
+asus-numberpad install apply
+asus-numberpad gesture double-tap plan
+asus-numberpad gesture double-tap apply
+asus-numberpad gesture hold apply
 asus-numberpad disable plan
 asus-numberpad disable apply
-asus-numberpad recover
 ```
 
-Probe is read-only. Plan shows exact current nodes, profile and proposed files.
-Apply repeats discovery, asks for `apply`, then uses native sudo/doas authentication
-for only the fixed root-owned permission rule. The root helper independently
-rediscovers hardware. No session is restarted. Autostart begins on next graphical
-login; Sway and other sessions without XDG autostart must invoke `asus-numberpad
-session` in their own session startup. Runit supervises in the current session
-runtime directory, never a root /var/service daemon. Systemd starts a user unit
-using an explicit allowlist imported from the current session environment.
-Concurrent sessions are unsupported; one per-user runtime lock prevents two
-runtimes in one session user runtime directory.
+Setup is an alias for install; run starts an attached diagnostic runtime;
+session starts supervision; recover resets illumination under the runtime lock.
+Normal Lazyvoid use needs none of these manual lifecycle commands. Applying a
+standalone plan requires typing apply and native authentication. --yes is used
+by the already reviewed Lazyvoid action and never bypasses native authentication.
 
-Permissions grant the selected account read/write access to exactly the matched
-touchpad and isolated tablet switch, **the entire matched I2C adapter** (including
-other devices on it), and **uinput**, which permits arbitrary input injection.
-This is a meaningful local trust grant. It adds no input group membership and
-no access to physical keyboard event devices. Rules resolve nodes dynamically
-on every udev event. Event and bus numbers are not saved in user configuration.
-Only one enrolled user is supported. Disable stops the owned supervisor and
-removes owned startup and rules, resets device permissions and reruns distribution
-udev rules. Modified/unowned files are refused, never removed. Configuration at
-`$XDG_CONFIG_HOME/asus-numberpad/config.json` (default ~/.config) is retained;
-`hold_seconds` defaults to 1.0 (range .2–5).
+Double-tap the upper-right icon to toggle, lifting between taps (each <=250ms,
+gap <=400ms). Movement/multiple contacts cancel it. Hold remains selectable.
+Double-tap while off passes ordinary taps to the desktop, so use the icon over
+a harmless desktop area during acceptance. While on only the chosen touchpad
+is grabbed. All generated keys are released and illumination/grab reset on
+stop, errors, tablet mode, sleep and session loss; resume starts off. Physical
+keyboard, external mouse and touchscreen are not opened. No tapping setting is
+rewritten. Mutable physical modifiers and every printed symbol need live testing.
 
-`recover` requires the runtime to have stopped, acquires its lock and turns off
-illumination. The kernel releases grabs and uinput devices on process death.
-SIGKILL/power loss cannot run cleanup; restart/recover resets illumination before
-any input grab. Stop a foreground `run` process and Ctrl-C the attached runit `session` supervisor before disabling. Disable refuses a live runit session parent and holds its session lock through permission revocation. An unplugged
-unknown device cannot be illuminated by recovery; permission/startup removal can
-still proceed. Never use a stale bus number for recovery.
+Permissions cover the selected touchpad, isolated tablet switch, entire resolved
+I2C adapter (every address), and uinput (arbitrary input injection), without
+physical keyboard or input-group grants. Discovery resolves current event/bus
+identities each time. Only exact owned enrollment/startup files can be changed;
+modified or foreign files cause refusal. An incomplete teardown blocks removal
+rather than abandoning a surviving supervisor. Failed setup leaves the package
+and owned state available for repeat Install or Remove; no rollback is promised.
 
-## Acceptance and limits
+## Dependencies and sessions
 
-The adapter uses the actual X11/Wayland XKB map via xkbcli, refusing multiple
-groups until group tracking is implemented. Keyboard layout changes stop it;
-restart explicitly with the new layout. Holding physical modifiers while using
-the keypad needs acceptance testing. It does not read physical keyboards to
-cancel those modifiers. This restriction must be resolved before general support
-claims. No keyboard backlight or privacy-indicator behavior is included.
+Target: native Linux glibc, libxkbcommon with xkbcli dump-keymap-x11 and
+dump-keymap-wayland >=1.8, logind/elogind with loginctl, D-Bus, udev, kmod,
+and runit or a live systemd user manager. No target Python, evdev binding,
+GObject/Gio, cairo, pip or Rust compiler. Input/uinput/I2C use native Linux FDs;
+D-Bus sleep monitoring uses zbus with a real delay-inhibitor FD.
 
-Unit/fault-injection and disposable staging evidence are separate from runtime
-service testing, graphical X11/Sway/GNOME/Plasma integration and physical laptop
-acceptance. All graphical and physical acceptance remains pending until recorded
-in VALIDATION.md. No automatic desktop switch, hardware install or release
-publication is performed by tests. See ORIGINS.md for provenance and licensing.
+Console-started X11 with tty session metadata is accepted only for a local :N
+display, authenticated real XKB connection, and active matching elogind account;
+SSH/Wayland ambiguity is refused. Environment variables are not rewritten.
+Runit supervision uses the current user session; XDG autostart resumes it on
+later graphical logins. Sessions without XDG autostart need their native startup
+to invoke asus-numberpad session. No desktop is restarted. Debian 12's xkbcommon
+1.5 lacks the required CLI and is refused for live operation. Systemd and live
+Wayland are separate pending acceptance targets.
+
+## Building and disposable validation
+
+Rust >=1.88, cargo and a native compiler are build dependencies. Cargo.lock pins
+all crates. Python is used only by the build license-inventory utility.
+
+```
+cargo test --locked --all-features
+cargo build --locked --release
+NUMBERPAD_BINARY=target/release/asus-numberpad ./install /absolute/stage
+```
+
+install stages an already-built native binary and dependency notices, refuses
+the host root and never enrolls/starts hardware. Production builds use no
+features. build-info must report test_fixtures:false. The optional test-fixtures
+feature is restricted to marked disposable Docker fixtures; staging refuses it
+outside explicit container QA. It must never be distributed to real machines.
+
+Umatix CI in Lazyvoid checks the exact source pin using test-void.Dockerfile,
+test-debian.Dockerfile and test-native.sh. Private D-Bus/X servers exercise real
+protocols and runit processes; synthetic device nodes and mocked module/udev
+commands exercise filesystem lifecycle. They do not test real kernel input,
+illumination or actual suspend. No host input/I2C devices are exposed. See
+VALIDATION.md and ORIGINS.md. No GitHub-hosted driver runners are configured.

@@ -2,7 +2,7 @@
 
 This public fork preserves its original fliplock history and adds a separately
 attributed optional [NumberPad component](numberpad/README.md). The maintained
-version target is **2.0.0**, independent of imported NumberPad **v7.3.0 + two
+version target is **3.0.0 (native Rust)**, independent of imported NumberPad **v7.3.0 + two
 recovery fixes**. Exact hardware mapping is provisional; hardware and graphical
 acceptance are pending, not claims of working support.
 
