@@ -39,11 +39,15 @@ cat > /tmp/numberpadqa-session.py <<'PY'
 import time
 from pathlib import Path
 from asus_numberpad import manage, runtime
+from unittest.mock import patch
 for repeat in range(2):
     deadline = time.monotonic() + 4
     runtime.session_active = lambda _: time.monotonic() < deadline
     manage.session()
     time.sleep(.5)
+with patch.object(manage, 'recover') as recover:
+    manage.stop_session()
+    recover.assert_called_once_with(missing_ok=True)
 events = Path('/tmp/numberpadqa-runtime/events').read_text().splitlines()
 assert events == ['start', 'stop', 'start', 'stop'], events
 print('PASS real runit session supervisor start/stop/restart; fixture child only')

@@ -1,5 +1,6 @@
 """Explicit, owned permission enrollment and user-session startup."""
 import json
+from contextlib import contextmanager, nullcontext
 import os
 from pathlib import Path
 import pwd
@@ -180,22 +181,36 @@ def setup(enable, apply):
         return
     if not sys.stdin.isatty() or input('Type apply to accept these changes: ') != 'apply':
         raise ValueError('Setup cancelled')
-    if not enable:
-        stop_session()
-    auth(enable)
-    for path, value in files.items():
-        if enable:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if not path.exists():
-                with path.open('x') as stream:
-                    stream.write(value)
-        elif path.exists():
-            path.unlink()
-    if enable and not config.exists():
-        config.parent.mkdir(parents=True, exist_ok=True)
-        with config.open('x') as stream:
-            json.dump({'hold_seconds': 1.0}, stream)
+    with session_guard() if not enable else nullcontext():
+        if not enable:
+            stop_session()
+        auth(enable)
+        for path, value in files.items():
+            if enable:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if not path.exists():
+                    with path.open('x') as stream:
+                        stream.write(value)
+            elif path.exists():
+                path.unlink()
+        if enable and not config.exists():
+            config.parent.mkdir(parents=True, exist_ok=True)
+            with config.open('x') as stream:
+                json.dump({'hold_seconds': 1.0}, stream)
     print('Setup complete. Configuration retained; start in your current session explicitly with asus-numberpad session.' if enable else 'Disabled; user configuration retained.')
+
+
+@contextmanager
+def session_guard():
+    """Serialize runit session lifetime against disable, including revocation."""
+    import fcntl
+    runtime = Path(os.environ['XDG_RUNTIME_DIR'])
+    with (runtime / 'asus-numberpad-session.lock').open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('Stop the NumberPad session supervisor before disabling or starting another session') from None
+        yield
 
 
 def stop_session():
@@ -203,7 +218,22 @@ def stop_session():
         subprocess.run(['systemctl', '--user', 'stop', 'asus-numberpad.service'], check=False)
     runtime = Path(os.environ['XDG_RUNTIME_DIR']) / 'asus-numberpad-runit'
     if runtime.exists() and shutil.which('sv'):
-        subprocess.run(['sv', 'down', str(runtime / 'driver')], check=True)
+        result = subprocess.run(['sv', 'down', str(runtime / 'driver')], check=False)
+        if result.returncode:
+            # session() leaves its directory after runsv exits. A stale directory
+            # must not prevent revocation, but a live unresponsive runsv must.
+            # runsv holds this flock for its entire lifetime; retain it while
+            # recovery checks the separate foreground-runtime lock.
+            import fcntl
+            supervise = runtime / 'driver' / 'supervise'
+            supervise.mkdir(parents=True, exist_ok=True)
+            with (supervise / 'lock').open('a') as lock:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    raise ValueError('Unable to stop live runit supervisor; retry disable after stopping it') from None
+                recover(missing_ok=True)
+            return
     # Lock ownership coordinates recovery with a possibly foreground runtime.
     recover(missing_ok=True)
 
@@ -241,35 +271,36 @@ def session():
         subprocess.run(['systemctl', '--user', 'daemon-reload'], check=True)
         subprocess.run(['systemctl', '--user', 'start', 'asus-numberpad.service'], check=True)
         return
-    runtime = Path(os.environ['XDG_RUNTIME_DIR']) / 'asus-numberpad-runit'
-    if runtime.parent.stat().st_uid != os.getuid():
-        raise ValueError('Runtime directory owner mismatch')
-    driver = runtime / 'driver'
-    driver.mkdir(parents=True, exist_ok=True)
-    run = driver / 'run'
-    run.write_text('#!/bin/sh\nsleep 2\nexec /usr/bin/asus-numberpad run\n')
-    run.chmod(0o700)
-    # runsvdir inherits this graphical session environment. Its child runtime
-    # exits and releases grabs on session loss. No /var/service root daemon.
-    from .runtime import session_active
-    import time
-    import signal
-    session_id = os.environ['XDG_SESSION_ID']
-    if not session_active(session_id):
-        raise ValueError('An active unlocked graphical session is required')
-    child = subprocess.Popen(['runsvdir', str(runtime)])
-    stopping = False
-    def stop(*_):
-        nonlocal stopping
-        stopping = True
-    previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
-    try:
-        while not stopping and child.poll() is None and session_active(session_id):
-            time.sleep(.5)
-    finally:
-        subprocess.run(['sv', 'down', str(driver)], check=False)
-        subprocess.run(['sv', 'exit', str(driver)], check=False)
-        child.send_signal(signal.SIGHUP)
-        child.wait(timeout=5)
-        for sig, handler in previous.items():
-            signal.signal(sig, handler)
+    with session_guard():
+        runtime = Path(os.environ['XDG_RUNTIME_DIR']) / 'asus-numberpad-runit'
+        if runtime.parent.stat().st_uid != os.getuid():
+            raise ValueError('Runtime directory owner mismatch')
+        driver = runtime / 'driver'
+        driver.mkdir(parents=True, exist_ok=True)
+        run = driver / 'run'
+        run.write_text('#!/bin/sh\nsleep 2\nexec /usr/bin/asus-numberpad run\n')
+        run.chmod(0o700)
+        # runsvdir inherits this graphical session environment. Its child runtime
+        # exits and releases grabs on session loss. No /var/service root daemon.
+        from .runtime import session_active
+        import time
+        import signal
+        session_id = os.environ['XDG_SESSION_ID']
+        if not session_active(session_id):
+            raise ValueError('An active unlocked graphical session is required')
+        child = subprocess.Popen(['runsvdir', str(runtime)])
+        stopping = False
+        def stop(*_):
+            nonlocal stopping
+            stopping = True
+        previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        try:
+            while not stopping and child.poll() is None and session_active(session_id):
+                time.sleep(.5)
+        finally:
+            subprocess.run(['sv', 'down', str(driver)], check=False)
+            subprocess.run(['sv', 'exit', str(driver)], check=False)
+            child.send_signal(signal.SIGHUP)
+            child.wait(timeout=5)
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)

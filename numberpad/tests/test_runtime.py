@@ -1,4 +1,5 @@
 import array
+import fcntl
 import os
 from pathlib import Path
 import signal
@@ -73,7 +74,7 @@ class PermissionTests(unittest.TestCase):
             custom = config / 'asus-numberpad/config.json'
             custom.parent.mkdir()
             custom.write_text('{"hold_seconds": 2.5, "personal": "retained"}')
-            with patch.dict(os.environ, XDG_CONFIG_HOME=temporary), \
+            with patch.dict(os.environ, XDG_CONFIG_HOME=temporary, XDG_RUNTIME_DIR=temporary), \
                  patch.object(manage.os, 'getuid', return_value=1001), \
                  patch.object(manage.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='testuser')), \
                  patch.object(manage, 'probe', return_value={'profile': 'b7402'}), \
@@ -89,6 +90,101 @@ class PermissionTests(unittest.TestCase):
                 self.assertEqual(auth.call_count, 3)
                 self.assertEqual(custom.read_text(), '{"hold_seconds": 2.5, "personal": "retained"}')
                 self.assertTrue(all(not path.exists() for path in manage.user_files()))
+
+
+class StoppedSessionTests(unittest.TestCase):
+    def test_disable_after_supervisor_exit_revokes_and_preserves_config(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = root / 'runtime'
+            (runtime / 'asus-numberpad-runit/driver/supervise').mkdir(parents=True)
+            config = root / 'config'
+            saved = config / 'asus-numberpad/config.json'
+            saved.parent.mkdir(parents=True)
+            saved.write_text('{"hold_seconds": 2.5}')
+            def which(name):
+                return '/usr/bin/sv' if name == 'sv' else None
+            with patch.dict(os.environ, XDG_RUNTIME_DIR=str(runtime), XDG_CONFIG_HOME=str(config)), \
+                 patch.object(manage.os, 'getuid', return_value=1001), \
+                 patch.object(manage.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='testuser')), \
+                 patch.object(manage.shutil, 'which', side_effect=which), \
+                 patch.object(manage.subprocess, 'run', return_value=SimpleNamespace(returncode=1)), \
+                 patch.object(manage, 'recover') as recover, patch.object(manage, 'auth') as auth, \
+                 patch.object(manage.sys.stdin, 'isatty', return_value=True), \
+                 patch('builtins.input', return_value='apply'):
+                for path, value in manage.user_files().items():
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(value)
+                manage.setup(False, True)
+                auth.assert_called_once_with(False)
+                recover.assert_called_once_with(missing_ok=True)
+                self.assertTrue(all(not path.exists() for path in manage.user_files()))
+                self.assertEqual(saved.read_text(), '{"hold_seconds": 2.5}')
+    def test_live_parent_without_runsv_blocks_disable_before_revocation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.dict(os.environ, XDG_RUNTIME_DIR=temporary, XDG_CONFIG_HOME=temporary), \
+                 patch.object(manage.os, 'getuid', return_value=1001), \
+                 patch.object(manage.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='testuser')), \
+                 patch.object(manage.sys.stdin, 'isatty', return_value=True), \
+                 patch('builtins.input', return_value='apply'), \
+                 patch.object(manage, 'auth') as auth, patch.object(manage, 'stop_session') as stop:
+                # Same guard held by session() even before runsvdir creates a child.
+                with manage.session_guard():
+                    with self.assertRaisesRegex(ValueError, 'session supervisor'):
+                        manage.setup(False, True)
+                auth.assert_not_called()
+                stop.assert_not_called()
+    def test_disable_guard_remains_held_during_revocation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            def revoke(enable):
+                self.assertFalse(enable)
+                with self.assertRaisesRegex(ValueError, 'session supervisor'):
+                    with manage.session_guard():
+                        self.fail('session start entered during revocation')
+            with patch.dict(os.environ, XDG_RUNTIME_DIR=temporary, XDG_CONFIG_HOME=temporary), \
+                 patch.object(manage.os, 'getuid', return_value=1001), \
+                 patch.object(manage.pwd, 'getpwuid', return_value=SimpleNamespace(pw_name='testuser')), \
+                 patch.object(manage.sys.stdin, 'isatty', return_value=True), \
+                 patch('builtins.input', return_value='apply'), \
+                 patch.object(manage, 'auth', side_effect=revoke), patch.object(manage, 'stop_session'):
+                manage.setup(False, True)
+    def test_failed_stop_of_live_supervisor_refuses_recovery(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary) / 'asus-numberpad-runit'
+            supervise = runtime / 'driver/supervise'
+            supervise.mkdir(parents=True)
+            with (supervise / 'lock').open('a') as held:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.dict(os.environ, XDG_RUNTIME_DIR=temporary), \
+                     patch.object(manage.shutil, 'which', side_effect=lambda name: '/usr/bin/sv' if name == 'sv' else None), \
+                     patch.object(manage.subprocess, 'run', return_value=SimpleNamespace(returncode=1)), \
+                     patch.object(manage, 'recover') as recover:
+                    with self.assertRaisesRegex(ValueError, 'live runit supervisor'):
+                        manage.stop_session()
+                    recover.assert_not_called()
+    def test_stale_supervisor_does_not_bypass_live_foreground_lock(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary)
+            (runtime / 'asus-numberpad-runit/driver/supervise').mkdir(parents=True)
+            real_stat = Path.stat
+            def stat(path, *args, **kwargs):
+                result = real_stat(path, *args, **kwargs)
+                if path == runtime:
+                    values = list(result)
+                    values[4] = 1001
+                    return os.stat_result(values)
+                return result
+            with (runtime / 'asus-numberpad.lock').open('a') as held:
+                fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                with patch.dict(os.environ, XDG_RUNTIME_DIR=temporary), \
+                     patch.object(manage.os, 'getuid', return_value=1001), \
+                     patch.object(Path, 'stat', stat), \
+                     patch.object(manage.shutil, 'which', side_effect=lambda name: '/usr/bin/sv' if name == 'sv' else None), \
+                     patch.object(manage.subprocess, 'run', return_value=SimpleNamespace(returncode=1)), \
+                     patch.object(manage, 'probe') as probe:
+                    with self.assertRaisesRegex(ValueError, 'Driver still running'):
+                        manage.stop_session()
+                    probe.assert_not_called()
 
 
 class ProcessTests(unittest.TestCase):

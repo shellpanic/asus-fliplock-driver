@@ -18,3 +18,26 @@ The fork release target is v2.0.0, independent of imported upstream NumberPad
 v7.3.0 + b87ae8d/ae5b329. Do not promote this candidate as validated hardware
 support. No upstream installer, physical hardware write, desktop restart or
 production repository publication was performed during these checks.
+
+## Void acceptance preparation fixes (2026-11-03)
+
+Read-only physical sysfs discovery exposed input event paths incorrectly rooted
+at `/dev`. Touchpad and isolated switch paths now use `/dev/input`; adapter and
+uinput remain under `/dev`. Regression checks assert all four path types with
+an injected device root.
+
+Disable now tolerates the runtime directory left by an exited runit supervisor.
+If `sv down` fails, it must acquire runsv's supervisor lock before attempting
+recovery. A session-lifetime lock also serializes the runit parent against
+disable through permission revocation, including intervals without a runsv
+child. Stop the attached session parent before disable. A live supervisor or
+foreground driver still prevents cleanup.
+Regressions cover stale-supervisor disable/config preservation, failed live
+supervisor stop, and a live foreground lock. Disposable session tests also
+exercise stop_session after the real fixture supervisor exits.
+
+Local suite: 26 pass, one private-bus dependency skip. New checks use disposable
+files/process locks and command doubles; no permission enrollment, hardware
+input, I2C writes or session changes were performed. Distribution CI evidence
+is recorded in the delivery PR. All live graphical and physical acceptance
+rows above remain pending. Systemd acceptance remains deferred.
