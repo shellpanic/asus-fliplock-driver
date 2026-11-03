@@ -1,7 +1,9 @@
 #!/bin/sh
 # Stage an already built native binary only; never enroll or start on install.
 set -eu
-[ "$#" -eq 1 ] && [ -n "$1" ] || { echo 'Usage: numberpad/install ABSOLUTE_STAGING_ROOT' >&2; exit 1; }
+if [ "$#" -ne 1 ] || [ -z "$1" ]; then
+    echo 'Usage: numberpad/install ABSOLUTE_STAGING_ROOT' >&2; exit 1
+fi
 case $1 in /*) ;; *) exit 1;; esac
 mkdir -p -- "$1"
 root=$(CDPATH='' cd -- "$1" && pwd -P)
@@ -11,7 +13,9 @@ binary=${NUMBERPAD_BINARY:-$base/target/release/asus-numberpad}
 [ -x "$binary" ] || { echo 'Build the locked native Rust binary explicitly first.' >&2; exit 1; }
 info=$("$binary" build-info)
 case $info in *'"test_fixtures":false'*) ;; *)
-    [ "${NUMBERPAD_DISPOSABLE_TEST:-}" = 1 ] && [ -f /.dockerenv ] || { echo 'Never stage fixture-enabled binaries for real systems.' >&2; exit 1; };; esac
+    if [ "${NUMBERPAD_DISPOSABLE_TEST:-}" != 1 ] || [ ! -f /.dockerenv ]; then
+        echo 'Never stage fixture-enabled binaries for real systems.' >&2; exit 1
+    fi;; esac
 mkdir -p "$root/usr/bin" "$root/usr/share/licenses/asus-numberpad-driver" "$root/usr/share/doc/asus-numberpad-driver"
 python3 "$base/dependency-inventory.py" --check --licenses "$root/usr/share/licenses/asus-numberpad-driver/dependencies"
 install -m644 "$base/dependencies.json" "$root/usr/share/licenses/asus-numberpad-driver/"
