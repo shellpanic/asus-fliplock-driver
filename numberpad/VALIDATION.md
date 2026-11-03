@@ -41,3 +41,19 @@ files/process locks and command doubles; no permission enrollment, hardware
 input, I2C writes or session changes were performed. Distribution CI evidence
 is recorded in the delivery PR. All live graphical and physical acceptance
 rows above remain pending. Systemd acceptance remains deferred.
+
+
+## CI runner policy
+
+Driver validation runs on the Umatix-owned `umatix-docker` runner pool through
+`umatix/lazyvoid`'s `.github/workflows/numberpad.yml` and `scripts/ci-numberpad`.
+That workflow tests the exact reviewed source pin in Lazyvoid, with disposable
+Void and Debian builds, all unit/staging checks, real runit fixture lifecycle
+and Debian-container lint/compilation. Systemd graphical acceptance remains
+separate and deferred. No distribution packages are installed on runner hosts.
+
+The former GitHub-hosted Ubuntu workflow is removed to avoid hosted-runner
+usage. This personal fork cannot directly use the organization's runner pool.
+External-fork PRs are excluded from the Umatix self-hosted jobs. Fork changes
+must be independently reviewed, then validated through the reviewed Lazyvoid
+pin update; an unpinned fork PR does not automatically receive CI checks.
