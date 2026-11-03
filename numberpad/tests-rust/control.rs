@@ -14,6 +14,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+// This is a functional process-protocol test, not a cold-exec benchmark.
+// Overlayfs fsync / concurrent image exports can delay fixture startup on CI;
+// allow 15s here without changing production readiness/stop deadlines.
 struct Process(Child);
 impl Drop for Process {
     fn drop(&mut self) {
@@ -49,13 +52,18 @@ fn name(role: &str) -> &str {
 }
 fn wait(root: &Path, role: &str, child: &mut Process) -> serde_json::Value {
     let path = root.join(format!("{}.json", name(role)));
-    let until = Instant::now() + Duration::from_secs(3);
+    let until = Instant::now() + Duration::from_secs(15);
     while !path.exists() {
         assert!(
             child.0.try_wait().unwrap().is_none(),
             "fixture exited before ready"
         );
-        assert!(Instant::now() < until, "fixture did not start");
+        assert!(
+            Instant::now() < until,
+            "fixture did not start: pid={}, wait={:?}",
+            child.0.id(),
+            fs::read_to_string(format!("/proc/{}/wchan", child.0.id()))
+        );
         thread::sleep(Duration::from_millis(10));
     }
     serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
@@ -225,7 +233,7 @@ fn wait_ready_replacement(
     process: &mut Process,
     old_token: &str,
 ) -> serde_json::Value {
-    let until = Instant::now() + Duration::from_secs(3);
+    let until = Instant::now() + Duration::from_secs(15);
     loop {
         assert!(process.0.try_wait().unwrap().is_none());
         if let Ok(data) = fs::read(root.join("asus-numberpad.json"))
@@ -235,7 +243,10 @@ fn wait_ready_replacement(
         {
             return value;
         }
-        assert!(Instant::now() < until, "runtime replacement was not ready");
+        assert!(
+            Instant::now() < until,
+            "runtime replacement was not ready within the fixture startup budget"
+        );
         thread::sleep(Duration::from_millis(10));
     }
 }
