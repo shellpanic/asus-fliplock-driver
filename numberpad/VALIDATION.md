@@ -2,7 +2,7 @@
 
 ## Automated evidence
 
-26 Rust component tests and 6 private-process IPC tests pass locally without
+27 Rust component tests and 6 private-process IPC tests pass locally without
 skips. The production runtime uses the tested event decoder and hardware guard;
 these tests do not take the fixture shortcut that bypasses hardware startup.
 
@@ -52,7 +52,7 @@ state during system sleep. Only the known ExpertBook profile is selected.
 The runtime can be restarted off after SIGKILL under an intact supervisor.
 SIGKILL of the session supervisor itself is different: unknown remaining
 restarters cannot be safely adopted or killed. Cleanup deliberately retains the
-package/grants and refuses unverified teardown. A fresh graphical login/reboot
+package/grants and refuses unverified teardown. A reboot
 clears the private session state; no broad pkill or arbitrary PID cleanup is used.
 
 Production builds exclude test-fixtures. Public source release/tag does not

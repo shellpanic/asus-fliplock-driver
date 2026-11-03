@@ -454,4 +454,56 @@ mod tests {
         drop(monitor);
         assert_eq!(peer.read(&mut [0]).unwrap(), 0);
     }
+    #[test]
+    fn repeated_sleep_resume_cycles_reacquire_and_release_inhibitors() {
+        let bus = PrivateBus::new();
+        let (fd, mut peer) = UnixStream::pair().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let service = bus.login(fd.into(), false);
+        for cycle in 0..2 {
+            let monitor = Monitor::connect(bus.builder()).unwrap();
+            assert!(!monitor.sleeping().unwrap());
+            service
+                .emit_signal(
+                    None::<&str>,
+                    "/org/freedesktop/login1",
+                    "org.freedesktop.login1.Manager",
+                    "PrepareForSleep",
+                    &(true,),
+                )
+                .unwrap();
+            let until = Instant::now() + Duration::from_secs(2);
+            while !monitor.sleeping().unwrap() {
+                assert!(Instant::now() < until);
+                thread::sleep(Duration::from_millis(10));
+            }
+            drop(monitor);
+            assert_eq!(
+                peer.read(&mut [0]).unwrap(),
+                0,
+                "cycle{cycle}: inhibitor FD leaked"
+            );
+            if cycle == 0 {
+                let (fd, next_peer) = UnixStream::pair().unwrap();
+                next_peer
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let interface = service
+                    .object_server()
+                    .interface::<_, Login>("/org/freedesktop/login1")
+                    .unwrap();
+                *interface.get().descriptor.lock().unwrap() = Some(fd.into());
+                peer = next_peer;
+                service
+                    .emit_signal(
+                        None::<&str>,
+                        "/org/freedesktop/login1",
+                        "org.freedesktop.login1.Manager",
+                        "PrepareForSleep",
+                        &(false,),
+                    )
+                    .unwrap();
+            }
+        }
+    }
 }

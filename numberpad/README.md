@@ -63,7 +63,7 @@ physical keyboard or input-group grants. Discovery resolves current event/bus
 identities each time. Only exact owned enrollment/startup files can be changed;
 modified or foreign files cause refusal. An incomplete teardown blocks removal
 rather than abandoning a surviving supervisor. If the session supervisor itself
-is forcibly killed, restart the graphical login/reboot to clear its private
+is forcibly killed, reboot to clear its private
 runtime state; automatic removal refuses unverified surviving descendants. Failed setup leaves the package
 and owned state available for repeat Install or Remove; no rollback is promised.
 
